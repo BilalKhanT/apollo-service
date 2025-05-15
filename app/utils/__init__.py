@@ -1,0 +1,29 @@
+from .config import *
+from .task_manager import TaskManager
+
+# Create our own instance here
+task_manager = TaskManager()
+
+__all__ = [
+    'CRAWLER_USER_AGENT',
+    'CRAWLER_TIMEOUT',
+    'CRAWLER_NUM_WORKERS',
+    'CRAWLER_DELAY_BETWEEN_REQUESTS',
+    'CRAWLER_INACTIVITY_TIMEOUT',
+    'CRAWLER_SAVE_INTERVAL',
+    'CRAWLER_RESPECT_ROBOTS_TXT',
+    'DEFAULT_URL_PATTERNS_TO_IGNORE',
+    'FILE_EXTENSIONS',
+    'SOCIAL_MEDIA_KEYWORDS',
+    'BANK_KEYWORDS',
+    'CLUSTER_MIN_SIZE',
+    'CLUSTER_PATH_DEPTH',
+    'CLUSTER_SIMILARITY_THRESHOLD',
+    'SCRAPER_OUTPUT_DIR',
+    'METADATA_DIR',
+    'EXPIRY_DAYS',
+    'FILE_DOWNLOAD_DIR',
+    'MAX_DOWNLOAD_WORKERS',
+    'DATA_DIR',
+    'task_manager'
+]

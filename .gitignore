@@ -1,0 +1,53 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Local development settings
+.env
+.env.local
+.env.development
+
+# Data files
+apollo_data/scraped/
+apollo_data/downloads/
+*.db
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# IDE specific files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Cache files
+.cache/
+
+# Redis dump file
+dump.rdb
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
