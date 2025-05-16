@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import logging
 import time
@@ -173,7 +174,14 @@ class ApolloOrchestrator:
             def status_callback(status_data):
                 # Calculate appropriate progress value (adjust as needed)
                 # Crawling is ~40% of the total workflow
-                progress = min(40.0, (status_data.get('progress', 0) / 100) * 40.0)
+                crawler_progress = status_data.get('progress', 0)
+                progress = (crawler_progress / 100) * 40.0
+
+                if not hasattr(self, '_last_progress'):
+                    self._last_progress = 0
+
+                progress = max(self._last_progress, progress)
+                self._last_progress = progress
                 
                 crawl_result = {
                     "crawl_results": {
@@ -191,7 +199,7 @@ class ApolloOrchestrator:
                 )
                 
                 # Log progress updates periodically
-                if status_data.get('pages_scraped', 0) % 10 == 0:  # Every 10 pages
+                if status_data.get('pages_scraped', 0) % 2 == 0:  # Every 2 pages
                     self.publish_log(
                         task_id,
                         f"Crawl progress: {status_data.get('pages_scraped', 0)} pages scraped, {status_data.get('links_found', 0)} links found",
@@ -216,6 +224,9 @@ class ApolloOrchestrator:
                 save_interval=CRAWLER_SAVE_INTERVAL,
                 inactivity_timeout=CRAWLER_INACTIVITY_TIMEOUT
             )
+
+            # Store the crawler instance for potential stopping
+            setattr(self, f"crawler_{task_id}", crawler)
             
             # Register the status callback
             crawler.register_status_callback(status_callback)
@@ -296,6 +307,9 @@ class ApolloOrchestrator:
             
             # Cluster URLs
             cluster_result = clusterer.cluster()
+
+            if hasattr(self, f"crawler_{task_id}"):
+                delattr(self, f"crawler_{task_id}")
             
             # Log URL clustering results
             self.publish_log(
@@ -374,6 +388,112 @@ class ApolloOrchestrator:
             )
             return task_manager.get_task_status(task_id)
     
+    def stop_crawl(self, task_id: str) -> Dict[str, Any]:
+        """
+        Stop a running crawl process gracefully with proper cleanup.
+    
+        Args:
+            task_id: ID of the task to stop
+        
+        Returns:
+            Dictionary with stop result
+        """
+        self.publish_log(task_id, f"Attempting to stop crawl task {task_id} gracefully...", "info")
+    
+        # Get the task status
+        task_status = task_manager.get_task_status(task_id)
+        
+        if not task_status:
+            error_msg = f"Task {task_id} not found"
+            self.publish_log(task_id, error_msg, "error")
+            return {"success": False, "message": error_msg}
+        
+        # Check if task is a crawl task
+        if task_status.get("type") != "crawl":
+            error_msg = f"Task {task_id} is not a crawl task"
+            self.publish_log(task_id, error_msg, "error")
+            return {"success": False, "message": error_msg}
+        
+        # Check if task is already completed or failed
+        current_status = task_status.get("status")
+        if current_status in ["completed", "failed", "stopped"]:
+            msg = f"Task {task_id} is already in '{current_status}' state"
+            self.publish_log(task_id, msg, "info")
+            return {"success": True, "message": msg}
+        
+        # Task is running, try to stop it
+        try:
+            # Get the crawler instance from context if available
+            crawler_instance = getattr(self, f"crawler_{task_id}", None)
+            
+            if crawler_instance:
+                # Stop the crawler directly
+                self.publish_log(task_id, "Stopping crawler...", "info")
+                stop_result = crawler_instance.stop()
+                
+                if stop_result:
+                    # Clean up the crawler
+                    cleanup_result = crawler_instance.cleanup()
+                    
+                    # Remove reference to the crawler
+                    delattr(self, f"crawler_{task_id}")
+                    
+                    # Update task status
+                    task_manager.update_task_status(
+                        task_id,
+                        status="stopped",
+                        progress=100.0,
+                        result={
+                            **task_status.get("result", {}),
+                            "stopped_at": datetime.now().isoformat(),
+                            "stopped_gracefully": True
+                        }
+                    )
+                    
+                    self.publish_log(task_id, "Crawler stopped gracefully", "info")
+                    return {
+                        "success": True, 
+                        "message": "Crawler stopped gracefully",
+                        "cleanup_completed": cleanup_result
+                    }
+                else:
+                    self.publish_log(task_id, "Failed to stop crawler", "error")
+                    return {"success": False, "message": "Failed to stop crawler"}
+            else:
+                # No direct crawler instance, just update the task status
+                self.publish_log(task_id, "No active crawler instance found, updating task status to stopped", "info")
+                
+                # Update task status to stopped
+                task_manager.update_task_status(
+                    task_id,
+                    status="stopped",
+                    progress=100.0,
+                    result={
+                        **task_status.get("result", {}),
+                        "stopped_at": datetime.now().isoformat(),
+                        "stopped_gracefully": False
+                    }
+                )
+                
+                return {
+                    "success": True, 
+                    "message": "Task marked as stopped but no active crawler found",
+                    "cleanup_completed": False
+                }
+        
+        except Exception as e:
+            error_msg = f"Error stopping crawler: {str(e)}"
+            self.publish_log(task_id, error_msg, "error")
+            
+            # Try to update task status anyway
+            task_manager.update_task_status(
+                task_id,
+                status="failed",
+                error=error_msg
+            )
+            
+            return {"success": False, "message": error_msg}
+
     def run_scrape_download(
         self,
         task_id: str,

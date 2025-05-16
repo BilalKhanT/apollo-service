@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Optional
 import logging
@@ -552,6 +552,58 @@ async def get_task_logs(task_id: str):
         logs=logs,
         count=len(logs)
     )
+
+@app.post("/api/crawl/{task_id}/stop", tags=["Crawling"])
+async def stop_crawl_task(task_id: str) -> Dict[str, Any]:
+    """
+    Stop a running crawl task with graceful cleanup.
+    
+    Args:
+        task_id: ID of the task to stop
+    
+    Returns:
+        Dictionary with stop result
+    """
+    task_status = task_manager.get_task_status(task_id)
+    
+    if not task_status:
+        # Return 404 if task doesn't exist
+        return Response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=json.dumps({"detail": f"Task {task_id} not found"}),
+            media_type="application/json"
+        )
+    
+    # Check if task is a crawl task
+    if task_status.get("type") != "crawl":
+        # Return 400 if task is not a crawl task
+        return Response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=json.dumps({"detail": f"Task {task_id} is not a crawl task"}),
+            media_type="application/json"
+        )
+    
+    # Try to stop the crawl task
+    stop_result = orchestrator.stop_crawl(task_id)
+    
+    if stop_result.get("success"):
+        # Return 200 if successfully stopped
+        return {
+            "id": task_id,
+            "status": "stopped",
+            "message": stop_result.get("message"),
+            "cleanup_completed": stop_result.get("cleanup_completed", False)
+        }
+    else:
+        # Return 500 if failed to stop
+        return Response(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=json.dumps({
+                "detail": stop_result.get("message", "Failed to stop task"),
+                "id": task_id
+            }),
+            media_type="application/json"
+        )
 
 # Health check route
 @app.get("/health", tags=["Health"])

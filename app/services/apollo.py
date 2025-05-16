@@ -98,6 +98,7 @@ class Apollo:
         # Activity tracking
         self.last_activity_time = time.time()
         self.last_activity_lock = threading.Lock()
+        self.inactive_time = 0
         
         # Counters and flags
         self.total_links_processed = 0
@@ -121,9 +122,15 @@ class Apollo:
         self.progress = 0.0
         
         # Status callback and update timing
-        self.status_callback = None
+        self.status_callbacks = []
         self.last_status_update = time.time()
         self.status_update_interval = 2.0  # seconds
+        
+        # Queue tracking for progress calculation
+        self.initial_queue_size = 1  # Start with the base URL
+        self.max_queue_size_reached = 1
+        self.url_queue = [(base_url, 0)]
+        self.frontier = set()
     
     def register_status_callback(self, callback):
         """
@@ -134,7 +141,7 @@ class Apollo:
         Args:
             callback: Function that takes a status dictionary as its only argument
         """
-        self.status_callback = callback
+        self.status_callbacks.append(callback)
     
     def _setup_logger(self):
         """Set up logging configuration"""
@@ -153,6 +160,7 @@ class Apollo:
         """Update the last activity timestamp"""
         with self.last_activity_lock:
             self.last_activity_time = time.time()
+            self.inactive_time = 0
     
     def should_exclude_url(self, url):
         """Check if a URL should be excluded based on patterns or other rules"""
@@ -210,11 +218,67 @@ class Apollo:
         
         # Check for inactivity timeout
         with self.last_activity_lock:
-            if (time.time() - self.last_activity_time) >= self.inactivity_timeout:
-                self.logger.info(f"Inactivity timeout reached. No new links added for {self.inactivity_timeout} seconds.")
+            current_time = time.time()
+            inactive_duration = current_time - self.last_activity_time
+            self.inactive_time = inactive_duration
+            if inactive_duration >= self.inactivity_timeout:
+                self.logger.info(f"Inactivity timeout reached. No new links added for {inactive_duration:.1f} seconds.")
                 return True
         
         return False
+    
+    def calculate_progress(self):
+        """
+        Calculate the current progress as a percentage (0-100).
+        Handles cases where limits are unbounded (infinity).
+        
+        Returns:
+            Progress percentage (0-100)
+        """
+        # Initialize progress
+        progress = 0.0
+        
+        # Calculate progress based on number of pages scraped
+        if self.max_pages_to_scrape != float("inf"):
+            # If we have a limit, calculate percentage
+            if self.max_pages_to_scrape > 0:
+                pages_progress = (self.total_pages_scraped / self.max_pages_to_scrape) * 100
+                progress = max(progress, min(pages_progress, 100.0))
+        else:
+            # If unbounded, use a logarithmic scale that approaches but never reaches 100%
+            # This gives the user a sense of progress without ever hitting 100% until done
+            if self.total_pages_scraped > 0:
+                # Log scale that approaches 90% as pages_scraped increases
+                # Formula: 90 * (1 - 1/(1 + pages_scraped/100))
+                pages_progress = 90.0 * (1.0 - 1.0/(1.0 + self.total_pages_scraped/100.0))
+                progress = max(progress, pages_progress)
+        
+        # Calculate progress based on number of links found
+        if self.max_links_to_scrape != float("inf"):
+            # If we have a limit, calculate percentage
+            if self.max_links_to_scrape > 0:
+                links_progress = (self.total_links_processed / self.max_links_to_scrape) * 100
+                progress = max(progress, min(links_progress, 100.0))
+        else:
+            # For unbounded links, use a similar logarithmic scale
+            if self.total_links_processed > 0:
+                links_progress = 90.0 * (1.0 - 1.0/(1.0 + self.total_links_processed/500.0))
+                progress = max(progress, links_progress)
+        
+        # Calculate progress based on queue size and frontier
+        if len(self.url_queue) == 0 and len(self.frontier) == 0:
+            # If both queue and frontier are empty, we're done - set to 100%
+            progress = 100.0
+        elif progress > 85.0 and (len(self.url_queue) < 10 or len(self.frontier) < 10):
+            # If we're almost done (queue/frontier almost empty), set progress to 95%
+            progress = 95.0
+        
+        # If we're inactive for a while, gradually increase progress
+        if self.inactive_time > 0:
+            inactive_progress = min(95.0, 80.0 + (self.inactive_time / self.inactivity_timeout) * 15.0)
+            progress = max(progress, inactive_progress)
+        
+        return progress
     
     def is_document_url(self, url):
         """Check if a URL is a document"""
@@ -230,7 +294,7 @@ class Apollo:
             # Periodically send status updates
             current_time = time.time()
             if current_time - self.last_status_update >= self.status_update_interval:
-                self.get_status()
+                self.update_status()
                 self.last_status_update = current_time
                 
             # Acquire semaphore to track active worker count
@@ -246,6 +310,13 @@ class Apollo:
                 # Get a URL from the queue with timeout
                 try:
                     current_url, current_depth = self.links_queue.get(timeout=self.worker_wait_timeout)
+                    
+                    # Update URL queue tracking for progress calculation
+                    with self.counter_lock:
+                        if current_url in self.url_queue:
+                            self.url_queue.remove((current_url, current_depth))
+                        self.frontier.add(current_url)
+                        
                 except queue.Empty:
                     # If queue is empty, don't exit immediately
                     # Only consider exiting if initial processing is done
@@ -269,6 +340,12 @@ class Apollo:
                             # Already visited, mark task done and skip
                             self.links_queue.task_done()
                             task_completed = True
+                            
+                            # Update frontier tracking
+                            with self.counter_lock:
+                                if current_url in self.frontier:
+                                    self.frontier.remove(current_url)
+                                    
                             continue
                         # Mark as visited while still holding the lock
                         self.visited_urls.add(current_url)
@@ -279,6 +356,12 @@ class Apollo:
                         if not task_completed:
                             self.links_queue.task_done()
                             task_completed = True
+                            
+                            # Update frontier tracking
+                            with self.counter_lock:
+                                if current_url in self.frontier:
+                                    self.frontier.remove(current_url)
+                                    
                         continue
                     
                     self.logger.info(f"Worker {worker_id} processing: {current_url} (Depth: {current_depth})")
@@ -290,10 +373,21 @@ class Apollo:
                         if not task_completed:
                             self.links_queue.task_done()
                             task_completed = True
+                            
+                            # Update frontier tracking
+                            with self.counter_lock:
+                                if current_url in self.frontier:
+                                    self.frontier.remove(current_url)
+                                    
                         break
                     
                     # Make the request with allow_redirects=True to follow redirects
                     response = scraper.get(current_url, timeout=self.timeout, allow_redirects=True)
+                    
+                    # Update frontier tracking
+                    with self.counter_lock:
+                        if current_url in self.frontier:
+                            self.frontier.remove(current_url)
                     
                     # Check if this URL was redirected
                     final_url = response.url
@@ -333,9 +427,6 @@ class Apollo:
                     # Update counter and progress
                     with self.counter_lock:
                         self.total_pages_scraped += 1
-                        # Calculate progress as percentage of max pages
-                        if self.max_pages_to_scrape != float('inf'):
-                            self.progress = min(100.0, (self.total_pages_scraped / self.max_pages_to_scrape) * 100)
                         
                         # Check limits right after incrementing
                         if self.total_pages_scraped >= self.max_pages_to_scrape:
@@ -413,6 +504,12 @@ class Apollo:
                                 if link not in self.visited_urls:
                                     self.links_queue.put((link, current_depth + 1))
                                     new_links_added += 1
+                                    
+                                    # Update queue tracking for progress calculation
+                                    with self.counter_lock:
+                                        self.url_queue.append((link, current_depth + 1))
+                                        self.max_queue_size_reached = max(self.max_queue_size_reached, 
+                                                                         len(self.url_queue) + len(self.frontier))
                         
                         # If we added new links, update the activity timestamp
                         if new_links_added > 0:
@@ -430,6 +527,11 @@ class Apollo:
                 except Exception as e:
                     error_msg = str(e)
                     self.logger.error(f"Worker {worker_id} error processing {current_url}: {error_msg}")
+                    
+                    # Update frontier tracking
+                    with self.counter_lock:
+                        if current_url in self.frontier:
+                            self.frontier.remove(current_url)
                     
                     # Record the error URL and error message
                     with self.error_urls_lock:
@@ -501,6 +603,33 @@ class Apollo:
             self.logger.info(f"Results saved to {self.output_file}")
             self.logger.info(f"Total execution time: {time.time() - self.start_time:.2f} seconds")
     
+    def update_status(self):
+        """
+        Update and report the current status of the crawler.
+        """
+        # Calculate progress
+        self.progress = self.calculate_progress()
+        
+        self.status = {
+            "status": "running" if not self.stop_event.is_set() else "completed",
+            "links_found": self.total_links_processed,
+            "pages_scraped": self.total_pages_scraped,
+            "progress": self.progress,
+            "execution_time_seconds": time.time() - self.start_time,
+            "queue_size": len(self.url_queue),
+            "frontier_size": len(self.frontier),
+            "inactive_time": self.inactive_time
+        }
+        
+        # Call status callbacks if any
+        for callback in self.status_callbacks:
+            try:
+                callback(self.status)
+            except Exception as e:
+                self.logger.error(f"Error in status callback: {str(e)}")
+                
+        return self.status
+    
     def start(self):
         """Start the crawler"""
         # Set status to running
@@ -537,6 +666,11 @@ class Apollo:
                     self.logger.info("Queue empty and no active workers - crawl complete")
                     break
                 
+                # Update inactive time
+                with self.last_activity_lock:
+                    current_time = time.time()
+                    self.inactive_time = current_time - self.last_activity_time
+                
                 # Check limits periodically from main thread too
                 if self.check_limits_reached():
                     self.stop_event.set()
@@ -546,7 +680,7 @@ class Apollo:
                 # Check for periodic status updates
                 current_time = time.time()
                 if current_time - self.last_status_update >= self.status_update_interval:
-                    self.get_status()
+                    self.update_status()
                     self.last_status_update = current_time
                 
                 # Save intermediate results periodically
@@ -584,6 +718,9 @@ class Apollo:
         self.status = "completed"
         self.progress = 100.0
         
+        # Final status update
+        self.update_status()
+        
         # Return the results
         return self.get_results()
     
@@ -603,23 +740,29 @@ class Apollo:
             
             # Update status
             self.status = "stopped"
+            self.progress = 100.0
+            
+            # Final status update
+            self.update_status()
             
             return True
         return False
     
     def get_status(self):
         """Get the current status of the crawler"""
+        # Calculate progress
+        self.progress = self.calculate_progress()
+        
         status = {
-            'status': self.status,
+            'status': "running" if not self.stop_event.is_set() else "completed",
             'progress': self.progress,
             'links_found': self.total_links_processed,
             'pages_scraped': self.total_pages_scraped,
-            'execution_time_seconds': time.time() - self.start_time
+            'execution_time_seconds': time.time() - self.start_time,
+            'queue_size': len(self.url_queue),
+            'frontier_size': len(self.frontier),
+            'inactive_time': self.inactive_time
         }
-        
-        # Call the callback if registered
-        if self.status_callback:
-            self.status_callback(status)
         
         return status
     
@@ -642,3 +785,33 @@ class Apollo:
             '404_urls': list(self.not_found_urls),
             'error_urls': self.error_urls
         }
+    
+    def cleanup(self):
+        """Perform cleanup operations"""
+        # Clear data structures
+        self.visited_urls.clear()
+        self.all_links.clear()
+        self.document_links.clear()
+        self.not_found_urls.clear()
+        self.error_urls.clear()
+        self.robots_txt_cache.clear()
+        
+        # Clear queue and frontiers
+        while not self.links_queue.empty():
+            try:
+                self.links_queue.get_nowait()
+                self.links_queue.task_done()
+            except queue.Empty:
+                break
+                
+        self.url_queue.clear()
+        self.frontier.clear()
+        
+        # Reset counters and flags
+        self.total_links_processed = 0
+        self.total_pages_scraped = 0
+        
+        # Log completion of cleanup
+        self.logger.info("Cleanup completed")
+        
+        return True
