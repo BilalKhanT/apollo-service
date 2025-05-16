@@ -1,8 +1,12 @@
 # app/models/__init__.py
-from .models import (
-    CrawlRequest, CrawlStatus, ClusterResult, YearCluster,
-    ScrapingRequest, ScrapingStatus, Cluster, DomainCluster
-)
+from .crawl_request import CrawlRequest
+from .crawl_status import CrawlStatus
+from .cluster_result import ClusterResult
+from .year_cluster import YearCluster
+from .scraping_request import ScrapingRequest
+from .scraping_status import ScrapingStatus
+from .cluster import Cluster
+from .domain_cluster import DomainCluster
 
 __all__ = [
     'CrawlRequest',

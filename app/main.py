@@ -6,7 +6,7 @@ import socketio
 import asyncio
 import json
 
-from app.models.models import (
+from app.models import (
     CrawlRequest, CrawlStatus, ClusterResult, YearCluster,
     ScrapingRequest, ScrapingStatus
 )
