@@ -31,7 +31,11 @@ app = FastAPI(
 )
 
 # Create Socket.IO server
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+sio = socketio.AsyncServer(
+    async_mode='asgi', 
+    cors_allowed_origins='*',
+    engineio_path='socket.io' 
+)
 socket_app = socketio.ASGIApp(sio)
 
 # Add CORS middleware
