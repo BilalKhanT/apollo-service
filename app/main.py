@@ -606,7 +606,7 @@ async def redis_listener():
 async def startup_event():
     """Start background tasks when FastAPI app starts."""
     # Start Redis listener task
-    # asyncio.create_task(redis_listener())
+    asyncio.create_task(redis_listener())
     logger.info("Redis listener started")
 
 if __name__ == "__main__":

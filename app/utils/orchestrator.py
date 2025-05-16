@@ -50,6 +50,7 @@ class ApolloOrchestrator:
             base_directory: Base directory for storing all data and output
         """
         self.base_directory = base_directory or DATA_DIR
+        self.logger = logger
         
         # Create directory structure
         os.makedirs(self.base_directory, exist_ok=True)
