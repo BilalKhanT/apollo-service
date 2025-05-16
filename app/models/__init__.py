@@ -7,6 +7,8 @@ from .scraping_request import ScrapingRequest
 from .scraping_status import ScrapingStatus
 from .cluster import Cluster
 from .domain_cluster import DomainCluster
+from .log_entry import LogEntry
+from .log_response import LogResponse
 
 __all__ = [
     'CrawlRequest',
@@ -17,4 +19,6 @@ __all__ = [
     'ScrapingStatus',
     'Cluster',
     'DomainCluster'
+    'LogEntry'
+    'LogResponse'
 ]

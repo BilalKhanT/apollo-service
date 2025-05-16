@@ -32,6 +32,15 @@ class TaskManager:
             self.tasks: Dict[str, Dict[str, Any]] = {}
             self.lock = threading.Lock()
             
+            # Add a dictionary to store logs for each task
+            self.task_logs: Dict[str, List[Dict[str, Any]]] = {}
+            
+            # Set a maximum number of logs to store per task
+            self.max_logs_per_task = 1000
+            
+            # Add a lock for logs
+            self.logs_lock = threading.Lock()
+            
             # Create data directory if it doesn't exist
             logger.info(f"Creating data directory: {data_dir}")
             os.makedirs(data_dir, exist_ok=True)
@@ -119,6 +128,11 @@ class TaskManager:
                 }
                 
                 logger.info(f"Task {task_id} created in memory")
+            
+            # Initialize empty log list for this task
+            with self.logs_lock:
+                self.task_logs[task_id] = []
+                logger.info(f"Initialized empty log list for task {task_id}")
             
             # Publish task update to Redis (outside of lock)
             if hasattr(self, 'redis_client') and self.redis_client is not None:
@@ -235,6 +249,56 @@ class TaskManager:
             logger.error(f"Error updating task status: {str(e)}")
             logger.error(traceback.format_exc())
             return False
+    
+    def store_log(self, task_id: str, log_entry: Dict[str, Any]) -> None:
+        """
+        Store a log entry for a task.
+        
+        Args:
+            task_id: ID of the task
+            log_entry: Log entry to store
+        """
+        try:
+            with self.logs_lock:
+                # Initialize log list for this task if it doesn't exist
+                if task_id not in self.task_logs:
+                    self.task_logs[task_id] = []
+                
+                # Add the log entry
+                self.task_logs[task_id].append(log_entry)
+                
+                # Trim logs if they exceed the maximum
+                if len(self.task_logs[task_id]) > self.max_logs_per_task:
+                    # Remove oldest logs
+                    self.task_logs[task_id] = self.task_logs[task_id][-self.max_logs_per_task:]
+                    logger.info(f"Trimmed logs for task {task_id} to {self.max_logs_per_task} entries")
+        except Exception as e:
+            logger.error(f"Error storing log for task {task_id}: {str(e)}")
+    
+    def get_and_clear_logs(self, task_id: str) -> List[Dict[str, Any]]:
+        """
+        Get and clear all logs for a task.
+        
+        Args:
+            task_id: ID of the task
+            
+        Returns:
+            List of log entries
+        """
+        try:
+            with self.logs_lock:
+                # Get logs
+                logs = self.task_logs.get(task_id, [])
+                
+                # Clear logs
+                if task_id in self.task_logs:
+                    self.task_logs[task_id] = []
+                    logger.info(f"Cleared logs for task {task_id}")
+                
+                return logs
+        except Exception as e:
+            logger.error(f"Error getting and clearing logs for task {task_id}: {str(e)}")
+            return []
     
     def publish_task_update(self, task_id: str) -> bool:
         """
@@ -415,10 +479,6 @@ class TaskManager:
         """
         logger.info(f"Publishing log for task {task_id}: [{level}] {message}")
         
-        if not hasattr(self, 'redis_client') or self.redis_client is None:
-            logger.warning("Redis client not available, cannot publish log")
-            return False
-        
         try:
             if task_id not in self.tasks:
                 logger.warning(f"Cannot publish log for non-existent task {task_id}")
@@ -430,6 +490,14 @@ class TaskManager:
                 'level': level,
                 'message': message
             }
+            
+            # Store the log entry locally first
+            self.store_log(task_id, log_entry)
+            
+            # Continue with Redis publishing if available
+            if not hasattr(self, 'redis_client') or self.redis_client is None:
+                logger.warning("Redis client not available, cannot publish log")
+                return True  # Return True because we stored the log locally
             
             # Publish to task-specific logs channel
             log_channel = f"logs:{task_id}"
@@ -443,7 +511,7 @@ class TaskManager:
             global_recipients = self.redis_client.publish(global_log_channel, log_entry)
             logger.info(f"Published to global log channel, recipients: {global_recipients}")
             
-            return recipients > 0 or global_recipients > 0
+            return recipients > 0 or global_recipients > 0 or True  # Return True even if Redis fails
             
         except Exception as e:
             logger.error(f"Error publishing log: {str(e)}")
@@ -541,7 +609,15 @@ class TaskManager:
                     del self.tasks[task_id]
                 
                 logger.info(f"Removed {len(tasks_to_remove)} old tasks")
-                return len(tasks_to_remove)
+            
+            # Also clean up logs for removed tasks
+            with self.logs_lock:
+                for task_id in tasks_to_remove:
+                    if task_id in self.task_logs:
+                        del self.task_logs[task_id]
+                        logger.info(f"Removed logs for task {task_id}")
+                
+            return len(tasks_to_remove)
         except Exception as e:
             logger.error(f"Error cleaning up old tasks: {str(e)}")
             logger.error(traceback.format_exc())

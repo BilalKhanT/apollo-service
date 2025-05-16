@@ -11,6 +11,7 @@ from app.models import (
     ScrapingRequest, ScrapingStatus
 )
 
+from app.models.log_response import LogResponse
 from app.utils.task_manager import task_manager
 from app.utils.orchestrator import orchestrator
 from app.utils.redis_client import RedisClient
@@ -34,7 +35,6 @@ app = FastAPI(
 sio = socketio.AsyncServer(
     async_mode='asgi', 
     cors_allowed_origins='*',
-    engineio_path='socket.io' 
 )
 socket_app = socketio.ASGIApp(sio)
 
@@ -526,6 +526,30 @@ async def websocket_info():
             }
         }
     }
+
+@app.get("/api/logs/{task_id}", response_model=LogResponse, tags=["Logs"])
+async def get_task_logs(task_id: str):
+    """
+    Get and clear logs for a specific task.
+    
+    Args:
+        task_id: ID of the task
+    
+    Returns:
+        List of log entries
+    """
+    # Check if task exists
+    task = task_manager.get_task_status(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    
+    # Get logs for the task
+    logs = task_manager.get_and_clear_logs(task_id)
+    
+    return LogResponse(
+        logs=logs,
+        count=len(logs)
+    )
 
 # Health check route
 @app.get("/health", tags=["Health"])
