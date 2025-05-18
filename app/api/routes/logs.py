@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
-
-from app.models.log_response import LogResponse
+from app.models import LogResponse
 from app.utils.task_manager import task_manager
 
 router = APIRouter(prefix="/api/logs", tags=["Logs"])

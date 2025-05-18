@@ -12,7 +12,7 @@ __all__ = [
     'ScrapingRequest',
     'ScrapingStatus',
     'Cluster',
-    'DomainCluster'
-    'LogEntry'
-    'LogResponse'
+    'DomainCluster',
+    'LogEntry',
+    'LogResponse',
 ]
