@@ -175,13 +175,51 @@ class ApolloOrchestrator:
                 # Calculate appropriate progress value (adjust as needed)
                 # Crawling is ~40% of the total workflow
                 crawler_progress = status_data.get('progress', 0)
-                progress = (crawler_progress / 100) * 40.0
-
+                execution_time_seconds = status_data.get('execution_time_seconds', 0)
+                
+                # Basic scaling: crawler progress (0-100) maps to overall progress (0-40)
+                base_progress = (crawler_progress / 100) * 40.0
+                
+                # For unbounded cases (null max_links, max_pages, or depth), implement a more 
+                # dynamic progress calculation that moves faster
+                if (max_links_to_scrape == float("inf") or 
+                    max_pages_to_scrape == float("inf") or 
+                    depth_limit == float("inf")):
+                    
+                    # Start adding time-based progress after just 30 seconds
+                    if execution_time_seconds > 30:
+                        # Calculate time factor - reach additional 52% in 3 minutes (180 seconds)
+                        # This will take progress from 38% to 90% in that time
+                        max_additional_progress = 52.0  # From 38% to 90%
+                        time_factor = min(1.0, (execution_time_seconds - 30) / 180)
+                        time_progress = time_factor * max_additional_progress
+                        
+                        # Check if crawler shows high activity (lots of pages or links)
+                        pages_scraped = status_data.get('pages_scraped', 0)
+                        links_found = status_data.get('links_found', 0)
+                        
+                        # If crawler is very active, accelerate the progress
+                        if pages_scraped > 100 or links_found > 500:
+                            time_progress = min(max_additional_progress, time_progress * 1.5)
+                        
+                        # Apply time-based progress, capped at 90%
+                        adjusted_progress = min(90.0, base_progress + time_progress)
+                    else:
+                        adjusted_progress = base_progress
+                else:
+                    # For bounded crawls, use the crawler's native progress
+                    adjusted_progress = base_progress
+                
+                # Ensure we never go backwards in progress
                 if not hasattr(self, '_last_progress'):
                     self._last_progress = 0
-
-                progress = max(self._last_progress, progress)
+                
+                progress = max(self._last_progress, adjusted_progress)
                 self._last_progress = progress
+                
+                # Handle completion - crawler reports 100% progress
+                if crawler_progress >= 99.0:
+                    progress = 40.0  # Full crawl phase completion
                 
                 crawl_result = {
                     "crawl_results": {
