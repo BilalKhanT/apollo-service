@@ -8,8 +8,8 @@ import traceback
 from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 
-from app.utils.redis_client import RedisClient
-from app.utils.config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD
+# from app.utils.redis_client import RedisClient
+# from app.utils.config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD
 
 logger = logging.getLogger(__name__)
 
@@ -46,30 +46,30 @@ class TaskManager:
             os.makedirs(data_dir, exist_ok=True)
             
             # Initialize Redis client for real-time updates
-            logger.info(f"Connecting to Redis at {REDIS_HOST}:{REDIS_PORT} (DB: {REDIS_DB})")
-            try:
-                self.redis_client = RedisClient(
-                    host=REDIS_HOST,
-                    port=REDIS_PORT,
-                    db=REDIS_DB,
-                    password=REDIS_PASSWORD
-                )
-                logger.info("Successfully connected to Redis")
+            # logger.info(f"Connecting to Redis at {REDIS_HOST}:{REDIS_PORT} (DB: {REDIS_DB})")
+            # try:
+            #     self.redis_client = RedisClient(
+            #         host=REDIS_HOST,
+            #         port=REDIS_PORT,
+            #         db=REDIS_DB,
+            #         password=REDIS_PASSWORD
+            #     )
+            #     logger.info("Successfully connected to Redis")
                 
-                # Test Redis connection with a simple set/get operation
-                try:
-                    test_key = f"test_connection_{uuid.uuid4()}"
-                    test_value = "connection_test"
-                    self.redis_client.publish("test_channel", {"message": "Testing connection"})
-                    logger.info("Redis connection test successful")
-                except Exception as test_error:
-                    logger.warning(f"Redis connection test failed: {str(test_error)}")
+            #     # Test Redis connection with a simple set/get operation
+            #     try:
+            #         test_key = f"test_connection_{uuid.uuid4()}"
+            #         test_value = "connection_test"
+            #         self.redis_client.publish("test_channel", {"message": "Testing connection"})
+            #         logger.info("Redis connection test successful")
+            #     except Exception as test_error:
+            #         logger.warning(f"Redis connection test failed: {str(test_error)}")
                 
-            except Exception as redis_error:
-                logger.error(f"Failed to initialize Redis client: {str(redis_error)}")
-                logger.error(traceback.format_exc())
-                # Continue without Redis - we'll handle this in other methods
-                self.redis_client = None
+            # except Exception as redis_error:
+            #     logger.error(f"Failed to initialize Redis client: {str(redis_error)}")
+            #     logger.error(traceback.format_exc())
+            #     # Continue without Redis - we'll handle this in other methods
+            #     self.redis_client = None
                 
         except Exception as e:
             logger.error(f"Error during TaskManager initialization: {str(e)}")
@@ -135,17 +135,17 @@ class TaskManager:
                 logger.info(f"Initialized empty log list for task {task_id}")
             
             # Publish task update to Redis (outside of lock)
-            if hasattr(self, 'redis_client') and self.redis_client is not None:
-                logger.info(f"Publishing task {task_id} update to Redis")
-                try:
-                    publish_result = self.publish_task_update(task_id)
-                    logger.info(f"Redis publish result: {publish_result}")
-                except Exception as redis_error:
-                    logger.error(f"Error publishing task update to Redis: {str(redis_error)}")
-                    logger.error(traceback.format_exc())
-                    # Continue despite Redis error
-            else:
-                logger.warning("Redis client not available, skipping task update publication")
+            # if hasattr(self, 'redis_client') and self.redis_client is not None:
+            #     logger.info(f"Publishing task {task_id} update to Redis")
+            #     try:
+            #         publish_result = self.publish_task_update(task_id)
+            #         logger.info(f"Redis publish result: {publish_result}")
+            #     except Exception as redis_error:
+            #         logger.error(f"Error publishing task update to Redis: {str(redis_error)}")
+            #         logger.error(traceback.format_exc())
+            #         # Continue despite Redis error
+            # else:
+            #     logger.warning("Redis client not available, skipping task update publication")
             
             logger.info(f"Task {task_id} creation completed successfully")
             return task_id
@@ -231,17 +231,17 @@ class TaskManager:
                 # Publish task update to Redis (deferred to outside the lock)
             
             # Publish task update to Redis outside of the lock
-            if hasattr(self, 'redis_client') and self.redis_client is not None:
-                logger.info(f"Publishing task {task_id} update to Redis after status change")
-                try:
-                    publish_result = self.publish_task_update(task_id)
-                    logger.info(f"Redis publish result: {publish_result}")
-                except Exception as redis_error:
-                    logger.error(f"Error publishing task update to Redis: {str(redis_error)}")
-                    logger.error(traceback.format_exc())
-                    # Continue despite Redis error
-            else:
-                logger.warning("Redis client not available, skipping task update publication")
+            # if hasattr(self, 'redis_client') and self.redis_client is not None:
+            #     logger.info(f"Publishing task {task_id} update to Redis after status change")
+            #     try:
+            #         publish_result = self.publish_task_update(task_id)
+            #         logger.info(f"Redis publish result: {publish_result}")
+            #     except Exception as redis_error:
+            #         logger.error(f"Error publishing task update to Redis: {str(redis_error)}")
+            #         logger.error(traceback.format_exc())
+            #         # Continue despite Redis error
+            # else:
+            #     logger.warning("Redis client not available, skipping task update publication")
             
             return True
             
@@ -300,170 +300,170 @@ class TaskManager:
             logger.error(f"Error getting and clearing logs for task {task_id}: {str(e)}")
             return []
     
-    def publish_task_update(self, task_id: str) -> bool:
-        """
-        Publish task status update to Redis for real-time notifications.
+    # def publish_task_update(self, task_id: str) -> bool:
+    #     """
+    #     Publish task status update to Redis for real-time notifications.
         
-        Args:
-            task_id: ID of the task to publish update for
+    #     Args:
+    #         task_id: ID of the task to publish update for
             
-        Returns:
-            True if update was published, False otherwise
-        """
-        logger.info(f"Publishing task {task_id} update to Redis")
+    #     Returns:
+    #         True if update was published, False otherwise
+    #     """
+    #     logger.info(f"Publishing task {task_id} update to Redis")
         
-        if not hasattr(self, 'redis_client') or self.redis_client is None:
-            logger.warning("Redis client not available, cannot publish task update")
-            return False
+    #     if not hasattr(self, 'redis_client') or self.redis_client is None:
+    #         logger.warning("Redis client not available, cannot publish task update")
+    #         return False
         
-        try:
-            task = self.get_task_status(task_id)
-            if task is None:
-                logger.warning(f"Cannot publish update for non-existent task {task_id}")
-                return False
+    #     try:
+    #         task = self.get_task_status(task_id)
+    #         if task is None:
+    #             logger.warning(f"Cannot publish update for non-existent task {task_id}")
+    #             return False
             
-            task_type = task.get('type', '')
-            logger.info(f"Preparing update for task type: {task_type}")
+    #         task_type = task.get('type', '')
+    #         logger.info(f"Preparing update for task type: {task_type}")
             
-            # Format update data based on task type
-            try:
-                if task_type == 'crawl':
-                    # Extract relevant data for crawl tasks
-                    result = task.get('result', {})
-                    if result is None:
-                        result = {}
-                        logger.warning(f"Task {task_id} result is None, using empty dict")
+    #         # Format update data based on task type
+    #         try:
+    #             if task_type == 'crawl':
+    #                 # Extract relevant data for crawl tasks
+    #                 result = task.get('result', {})
+    #                 if result is None:
+    #                     result = {}
+    #                     logger.warning(f"Task {task_id} result is None, using empty dict")
                     
-                    crawl_results = {}
-                    if isinstance(result, dict):
-                        crawl_results = result.get('crawl_results', {})
-                        if crawl_results is None:
-                            crawl_results = {}
-                            logger.warning(f"Task {task_id} crawl_results is None, using empty dict")
-                    else:
-                        logger.warning(f"Task {task_id} result is not a dict, it's a {type(result)}")
+    #                 crawl_results = {}
+    #                 if isinstance(result, dict):
+    #                     crawl_results = result.get('crawl_results', {})
+    #                     if crawl_results is None:
+    #                         crawl_results = {}
+    #                         logger.warning(f"Task {task_id} crawl_results is None, using empty dict")
+    #                 else:
+    #                     logger.warning(f"Task {task_id} result is not a dict, it's a {type(result)}")
                         
-                    logger.info(f"Preparing crawl update for task {task_id}")
-                    update = {
-                        'id': task_id,
-                        'type': task_type,
-                        'status': task.get('status', ''),
-                        'progress': task.get('progress', 0.0),
-                        'current_stage': task.get('status', ''),
-                        'links_found': crawl_results.get('total_links_found', 0),
-                        'pages_scraped': crawl_results.get('total_pages_scraped', 0),
-                        'error': task.get('error'),
-                        'clusters_ready': False
-                    }
+    #                 logger.info(f"Preparing crawl update for task {task_id}")
+    #                 update = {
+    #                     'id': task_id,
+    #                     'type': task_type,
+    #                     'status': task.get('status', ''),
+    #                     'progress': task.get('progress', 0.0),
+    #                     'current_stage': task.get('status', ''),
+    #                     'links_found': crawl_results.get('total_links_found', 0),
+    #                     'pages_scraped': crawl_results.get('total_pages_scraped', 0),
+    #                     'error': task.get('error'),
+    #                     'clusters_ready': False
+    #                 }
                     
-                    # Only check for cluster completion if we have result
-                    if isinstance(result, dict):
-                        update['clusters_ready'] = (
-                            result.get('cluster_complete', False) and 
-                            result.get('year_extraction_complete', False)
-                        )
+    #                 # Only check for cluster completion if we have result
+    #                 if isinstance(result, dict):
+    #                     update['clusters_ready'] = (
+    #                         result.get('cluster_complete', False) and 
+    #                         result.get('year_extraction_complete', False)
+    #                     )
                     
-                elif task_type == 'scrape':
-                    # Extract relevant data for scrape tasks
-                    result = task.get('result', {})
-                    if result is None:
-                        result = {}
-                        logger.warning(f"Task {task_id} result is None, using empty dict")
+    #             elif task_type == 'scrape':
+    #                 # Extract relevant data for scrape tasks
+    #                 result = task.get('result', {})
+    #                 if result is None:
+    #                     result = {}
+    #                     logger.warning(f"Task {task_id} result is None, using empty dict")
                         
-                    scrape_results = {}
-                    download_results = {}
+    #                 scrape_results = {}
+    #                 download_results = {}
                     
-                    if isinstance(result, dict):
-                        scrape_results = result.get('scrape_results', {})
-                        if scrape_results is None:
-                            scrape_results = {}
+    #                 if isinstance(result, dict):
+    #                     scrape_results = result.get('scrape_results', {})
+    #                     if scrape_results is None:
+    #                         scrape_results = {}
                             
-                        download_results = result.get('download_results', {})
-                        if download_results is None:
-                            download_results = {}
-                    else:
-                        logger.warning(f"Task {task_id} result is not a dict, it's a {type(result)}")
+    #                     download_results = result.get('download_results', {})
+    #                     if download_results is None:
+    #                         download_results = {}
+    #                 else:
+    #                     logger.warning(f"Task {task_id} result is not a dict, it's a {type(result)}")
                     
-                    logger.info(f"Preparing scrape update for task {task_id}")
-                    update = {
-                        'id': task_id,
-                        'type': task_type,
-                        'status': task.get('status', ''),
-                        'progress': task.get('progress', 0.0),
-                        'pages_scraped': scrape_results.get('pages_scraped', 0),
-                        'files_downloaded': download_results.get('files_downloaded', 0),
-                        'error': task.get('error')
-                    }
-                else:
-                    # Default format for other task types
-                    logger.info(f"Preparing generic update for task {task_id}")
-                    update = {
-                        'id': task_id,
-                        'type': task_type,
-                        'status': task.get('status', ''),
-                        'progress': task.get('progress', 0.0),
-                        'error': task.get('error')
-                    }
+    #                 logger.info(f"Preparing scrape update for task {task_id}")
+    #                 update = {
+    #                     'id': task_id,
+    #                     'type': task_type,
+    #                     'status': task.get('status', ''),
+    #                     'progress': task.get('progress', 0.0),
+    #                     'pages_scraped': scrape_results.get('pages_scraped', 0),
+    #                     'files_downloaded': download_results.get('files_downloaded', 0),
+    #                     'error': task.get('error')
+    #                 }
+    #             else:
+    #                 # Default format for other task types
+    #                 logger.info(f"Preparing generic update for task {task_id}")
+    #                 update = {
+    #                     'id': task_id,
+    #                     'type': task_type,
+    #                     'status': task.get('status', ''),
+    #                     'progress': task.get('progress', 0.0),
+    #                     'error': task.get('error')
+    #                 }
                 
-                # Check if update is JSON serializable
-                logger.info(f"Testing JSON serialization of update for task {task_id}")
-                try:
-                    update_json = json.dumps(update)
-                    logger.info(f"Update is JSON serializable, length: {len(update_json)}")
-                except (TypeError, ValueError) as json_error:
-                    logger.error(f"Update not JSON serializable: {str(json_error)}")
-                    # Simplify update to make it serializable
-                    update = {
-                        'id': task_id,
-                        'type': task_type,
-                        'status': task.get('status', ''),
-                        'progress': task.get('progress', 0.0),
-                        'error': task.get('error') or f"Error creating update: {str(json_error)}"
-                    }
-                    logger.info("Using simplified update")
+    #             # Check if update is JSON serializable
+    #             logger.info(f"Testing JSON serialization of update for task {task_id}")
+    #             try:
+    #                 update_json = json.dumps(update)
+    #                 logger.info(f"Update is JSON serializable, length: {len(update_json)}")
+    #             except (TypeError, ValueError) as json_error:
+    #                 logger.error(f"Update not JSON serializable: {str(json_error)}")
+    #                 # Simplify update to make it serializable
+    #                 update = {
+    #                     'id': task_id,
+    #                     'type': task_type,
+    #                     'status': task.get('status', ''),
+    #                     'progress': task.get('progress', 0.0),
+    #                     'error': task.get('error') or f"Error creating update: {str(json_error)}"
+    #                 }
+    #                 logger.info("Using simplified update")
                 
-                # Publish to task-specific channel
-                task_channel = f"task:{task_id}"
-                logger.info(f"Publishing to channel {task_channel}")
-                recipients = self.redis_client.publish(task_channel, update)
-                logger.info(f"Published to task channel, recipients: {recipients}")
+    #             # Publish to task-specific channel
+    #             task_channel = f"task:{task_id}"
+    #             logger.info(f"Publishing to channel {task_channel}")
+    #             recipients = self.redis_client.publish(task_channel, update)
+    #             logger.info(f"Published to task channel, recipients: {recipients}")
                 
-                # Also publish to global tasks channel
-                global_channel = "tasks:all"
-                logger.info(f"Publishing to channel {global_channel}")
-                global_recipients = self.redis_client.publish(global_channel, update)
-                logger.info(f"Published to global channel, recipients: {global_recipients}")
+    #             # Also publish to global tasks channel
+    #             global_channel = "tasks:all"
+    #             logger.info(f"Publishing to channel {global_channel}")
+    #             global_recipients = self.redis_client.publish(global_channel, update)
+    #             logger.info(f"Published to global channel, recipients: {global_recipients}")
                 
-                return recipients > 0 or global_recipients > 0
+    #             return recipients > 0 or global_recipients > 0
             
-            except Exception as format_error:
-                logger.error(f"Error formatting task update: {str(format_error)}")
-                logger.error(traceback.format_exc())
+    #         except Exception as format_error:
+    #             logger.error(f"Error formatting task update: {str(format_error)}")
+    #             logger.error(traceback.format_exc())
                 
-                # Try with a minimal update
-                try:
-                    minimal_update = {
-                        'id': task_id,
-                        'type': task_type,
-                        'status': task.get('status', ''),
-                        'error': f"Error formatting update: {str(format_error)}"
-                    }
+    #             # Try with a minimal update
+    #             try:
+    #                 minimal_update = {
+    #                     'id': task_id,
+    #                     'type': task_type,
+    #                     'status': task.get('status', ''),
+    #                     'error': f"Error formatting update: {str(format_error)}"
+    #                 }
                     
-                    task_channel = f"task:{task_id}"
-                    recipients = self.redis_client.publish(task_channel, minimal_update)
+    #                 task_channel = f"task:{task_id}"
+    #                 recipients = self.redis_client.publish(task_channel, minimal_update)
                     
-                    global_channel = "tasks:all"
-                    self.redis_client.publish(global_channel, minimal_update)
+    #                 global_channel = "tasks:all"
+    #                 self.redis_client.publish(global_channel, minimal_update)
                     
-                    return recipients > 0
-                except Exception as minimal_error:
-                    logger.error(f"Even minimal update failed: {str(minimal_error)}")
-                    return False
+    #                 return recipients > 0
+    #             except Exception as minimal_error:
+    #                 logger.error(f"Even minimal update failed: {str(minimal_error)}")
+    #                 return False
             
-        except Exception as e:
-            logger.error(f"Top level error in publish_task_update: {str(e)}")
-            logger.error(traceback.format_exc())
-            return False
+    #     except Exception as e:
+    #         logger.error(f"Top level error in publish_task_update: {str(e)}")
+    #         logger.error(traceback.format_exc())
+    #         return False
     
     def publish_log(self, task_id: str, message: str, level: str = "info") -> bool:
         """
@@ -493,25 +493,27 @@ class TaskManager:
             
             # Store the log entry locally first
             self.store_log(task_id, log_entry)
+
+            return True
             
             # Continue with Redis publishing if available
-            if not hasattr(self, 'redis_client') or self.redis_client is None:
-                logger.warning("Redis client not available, cannot publish log")
-                return True  # Return True because we stored the log locally
+            # if not hasattr(self, 'redis_client') or self.redis_client is None:
+            #     logger.warning("Redis client not available, cannot publish log")
+            #     return True  # Return True because we stored the log locally
             
-            # Publish to task-specific logs channel
-            log_channel = f"logs:{task_id}"
-            logger.info(f"Publishing to log channel {log_channel}")
-            recipients = self.redis_client.publish(log_channel, log_entry)
-            logger.info(f"Published to log channel, recipients: {recipients}")
+            # # Publish to task-specific logs channel
+            # log_channel = f"logs:{task_id}"
+            # logger.info(f"Publishing to log channel {log_channel}")
+            # recipients = self.redis_client.publish(log_channel, log_entry)
+            # logger.info(f"Published to log channel, recipients: {recipients}")
             
-            # Also publish to global logs channel
-            global_log_channel = "logs:all"
-            logger.info(f"Publishing to global log channel {global_log_channel}")
-            global_recipients = self.redis_client.publish(global_log_channel, log_entry)
-            logger.info(f"Published to global log channel, recipients: {global_recipients}")
+            # # Also publish to global logs channel
+            # global_log_channel = "logs:all"
+            # logger.info(f"Publishing to global log channel {global_log_channel}")
+            # global_recipients = self.redis_client.publish(global_log_channel, log_entry)
+            # logger.info(f"Published to global log channel, recipients: {global_recipients}")
             
-            return recipients > 0 or global_recipients > 0 or True  # Return True even if Redis fails
+            # return recipients > 0 or global_recipients > 0 or True  # Return True even if Redis fails
             
         except Exception as e:
             logger.error(f"Error publishing log: {str(e)}")
