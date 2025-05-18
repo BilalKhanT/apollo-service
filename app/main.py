@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 # Import route modules
-from app.api.routes import crawler, clusters, scraper, logs, health
+from app.api.routes import crawler, cluster, scraper, logs, health
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +26,7 @@ app.add_middleware(
 )
 
 app.include_router(crawler.router)
-app.include_router(clusters.router)
+app.include_router(cluster.router)
 app.include_router(scraper.router)
 app.include_router(logs.router)
 app.include_router(health.router)
