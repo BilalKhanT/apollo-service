@@ -1,6 +1,11 @@
 from typing import List
 from pydantic import BaseModel
-from app.models.log_entry import LogEntry
+
+class LogEntry(BaseModel):
+    task_id: str
+    timestamp: str
+    level: str
+    message: str
 
 class LogResponse(BaseModel):
     logs: List[LogEntry]
