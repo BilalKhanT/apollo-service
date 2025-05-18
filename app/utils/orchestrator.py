@@ -172,64 +172,58 @@ class ApolloOrchestrator:
             
             # Define a callback for Apollo status updates
             def status_callback(status_data):
-                # Calculate appropriate progress value (adjust as needed)
-                # Crawling is ~40% of the total workflow
-                crawler_progress = status_data.get('progress', 0)
+                # Get the current time elapsed since the crawler started
                 execution_time_seconds = status_data.get('execution_time_seconds', 0)
+                crawler_progress = status_data.get('progress', 0)
                 
-                # Basic scaling: crawler progress (0-100) maps to overall progress (0-40)
-                base_progress = (crawler_progress / 100) * 40.0
+                # Initialize progress tracking if not already done
+                if not hasattr(self, '_last_progress'):
+                    self._last_progress = 5.0  # Start at 5%
+                    self._last_update_time = time.time()
                 
-                # For unbounded cases (null max_links, max_pages, or depth), implement a more 
-                # dynamic progress calculation that moves faster
+                # SIMPLE APPROACH:
+                # Check if we're dealing with unlimited crawling (any parameter is infinity)
                 if (max_links_to_scrape == float("inf") or 
                     max_pages_to_scrape == float("inf") or 
                     depth_limit == float("inf")):
                     
-                    # Start adding time-based progress after just 30 seconds
-                    if execution_time_seconds > 30:
-                        # Calculate time factor - reach additional 52% in 3 minutes (180 seconds)
-                        # This will take progress from 38% to 90% in that time
-                        max_additional_progress = 52.0  # From 38% to 90%
-                        time_factor = min(1.0, (execution_time_seconds - 30) / 180)
-                        time_progress = time_factor * max_additional_progress
+                    # Calculate time since last progress update
+                    current_time = time.time()
+                    time_since_update = current_time - self._last_update_time
+                    
+                    # Increase progress by 1% every 2 seconds, but never exceed 95%
+                    if time_since_update >= 2.0:  # Every 2 secondss
+                        increase_amount = (time_since_update / 5.0)  # 1% per 5 seconds
+                        new_progress = min(95.0, self._last_progress + increase_amount)
                         
-                        # Check if crawler shows high activity (lots of pages or links)
-                        pages_scraped = status_data.get('pages_scraped', 0)
-                        links_found = status_data.get('links_found', 0)
-                        
-                        # If crawler is very active, accelerate the progress
-                        if pages_scraped > 100 or links_found > 500:
-                            time_progress = min(max_additional_progress, time_progress * 1.5)
-                        
-                        # Apply time-based progress, capped at 90%
-                        adjusted_progress = min(90.0, base_progress + time_progress)
+                        # Update the last progress update time
+                        self._last_update_time = current_time
+                        progress = new_progress
                     else:
-                        adjusted_progress = base_progress
+                        # No change in progress if less than 2 seconds have passed
+                        progress = self._last_progress
                 else:
-                    # For bounded crawls, use the crawler's native progress
-                    adjusted_progress = base_progress
+                    # For bounded crawls, calculate progress normally (0-40% range)
+                    if crawler_progress >= 99.0:
+                        # Full completion of crawl phase
+                        progress = 40.0
+                    else:
+                        # Normal scaling from crawler progress (0-100) to overall progress (0-40)
+                        progress = (crawler_progress / 100) * 40.0
                 
-                # Ensure we never go backwards in progress
-                if not hasattr(self, '_last_progress'):
-                    self._last_progress = 0
-                
-                progress = max(self._last_progress, adjusted_progress)
+                # Update last progress value
                 self._last_progress = progress
                 
-                # Handle completion - crawler reports 100% progress
-                if crawler_progress >= 99.0:
-                    progress = 40.0  # Full crawl phase completion
-                
+                # Prepare the crawl result
                 crawl_result = {
                     "crawl_results": {
                         "total_links_found": status_data.get('links_found', 0),
                         "total_pages_scraped": status_data.get('pages_scraped', 0),
-                        "execution_time_seconds": status_data.get('execution_time_seconds', 0)
+                        "execution_time_seconds": execution_time_seconds
                     }
                 }
                 
-                # Update task status with the latest data from crawler
+                # Update task status with progress and result
                 task_manager.update_task_status(
                     task_id,
                     progress=progress,
@@ -240,7 +234,8 @@ class ApolloOrchestrator:
                 if status_data.get('pages_scraped', 0) % 2 == 0:  # Every 2 pages
                     self.publish_log(
                         task_id,
-                        f"Crawl progress: {status_data.get('pages_scraped', 0)} pages scraped, {status_data.get('links_found', 0)} links found",
+                        f"Crawl progress: {status_data.get('pages_scraped', 0)} pages scraped, "
+                        f"{status_data.get('links_found', 0)} links found, progress: {progress:.1f}%",
                         "info"
                     )
             
