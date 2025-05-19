@@ -39,6 +39,7 @@ SOCIAL_MEDIA_KEYWORDS: List[str] = [
 ]
 
 # Keywords to categorize as bank-related links
+# In production, these should be customized based on the target bank
 BANK_KEYWORDS: List[str] = ['ubl', 'united']
 
 # URL clusterer settings
@@ -57,24 +58,7 @@ MAX_DOWNLOAD_WORKERS: int = int(os.getenv("MAX_DOWNLOAD_WORKERS", "3"))
 DATA_DIR: str = os.getenv("DATA_DIR", "apollo_data")
 
 # Redis
-REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD", None)
-
-# Redis DB numbers
-REDIS_BROKER_DB: int = int(os.getenv("REDIS_BROKER_DB", "0"))
-REDIS_BACKEND_DB: int = int(os.getenv("REDIS_BACKEND_DB", "1"))
-REDIS_PUBSUB_DB: int = int(os.getenv("REDIS_PUBSUB_DB", "2"))
-
-# Celery settings
-CELERY_BROKER_URL: str = os.getenv(
-    "CELERY_BROKER_URL", 
-    f"redis://{':' + REDIS_PASSWORD + '@' if REDIS_PASSWORD else ''}{REDIS_HOST}:{REDIS_PORT}/{REDIS_BROKER_DB}"
-)
-CELERY_RESULT_BACKEND: str = os.getenv(
-    "CELERY_RESULT_BACKEND", 
-    f"redis://{':' + REDIS_PASSWORD + '@' if REDIS_PASSWORD else ''}{REDIS_HOST}:{REDIS_PORT}/{REDIS_BACKEND_DB}"
-)
-
-# Redis URL for PubSub
-REDIS_PUBSUB_URL: str = f"redis://{':' + REDIS_PASSWORD + '@' if REDIS_PASSWORD else ''}{REDIS_HOST}:{REDIS_PORT}/{REDIS_PUBSUB_DB}"
+# REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+# REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+# REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+# REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD", None)

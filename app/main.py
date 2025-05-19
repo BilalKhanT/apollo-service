@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Apollo Web Crawler API",
-    description="API for the Apollo Web Scrapper with Celery Integration.",
+    description="API for the Apollo Web Scrapper.",
     version="1.0.0"
 )
 

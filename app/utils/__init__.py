@@ -1,6 +1,7 @@
 from .config import *
 from .task_manager import TaskManager
 
+# Create our own instance here
 task_manager = TaskManager()
 
 __all__ = [

@@ -5,8 +5,8 @@ import time
 from typing import Dict, Any, List, Optional
 import json
 
-from app.core.task_manager import task_manager
-from app.core.config import (
+from app.utils.task_manager import task_manager
+from app.utils.config import (
     CRAWLER_USER_AGENT, CRAWLER_TIMEOUT, CRAWLER_NUM_WORKERS,
     CRAWLER_DELAY_BETWEEN_REQUESTS, CRAWLER_INACTIVITY_TIMEOUT,
     CRAWLER_SAVE_INTERVAL, CRAWLER_RESPECT_ROBOTS_TXT,
@@ -76,7 +76,7 @@ class ApolloOrchestrator:
             level: Log level (debug, info, warning, error)
         """
         # Log to task manager
-        from app.core.task_manager import task_manager
+        from app.utils.task_manager import task_manager
         task_manager.publish_log(task_id, message, level)
             
         # Also log to regular logger
