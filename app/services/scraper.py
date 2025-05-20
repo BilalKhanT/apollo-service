@@ -9,11 +9,13 @@ import hashlib
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import logging
-from typing import Dict, List, Any, Optional, Tuple
+import traceback
+from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 
 class ClusterScraper:
     """
-    A class to scrape content from clustered URLs and convert them to markdown.
+    Enhanced ClusterScraper with improved progress tracking and reporting.
+    Scrapes content from clustered URLs and converts them to markdown.
     """
     
     def __init__(
@@ -21,16 +23,18 @@ class ClusterScraper:
         json_file_path: str,
         output_dir: str = "scraped_content",
         metadata_dir: str = "document_metadata",
-        expiry_days: Optional[int] = None
+        expiry_days: Optional[int] = None,
+        progress_update_interval: int = 2  # Update progress every 2 pages or 2% progress
     ):
         """
-        Initialize the cluster scraper.
+        Initialize the cluster scraper with enhanced progress tracking.
 
         Args:
             json_file_path: Path to the JSON file containing clusters
             output_dir: Base directory for saving scraped content
             metadata_dir: Directory for saving metadata files
             expiry_days: Number of days until document expiry
+            progress_update_interval: How often to update progress (pages or percentage)
         """
         # Setup logger
         self.logger = self._setup_logger()
@@ -40,6 +44,9 @@ class ClusterScraper:
         self.output_dir = output_dir
         self.metadata_dir = metadata_dir
         self.expiry_days = expiry_days
+        self.progress_update_interval = progress_update_interval
+        
+        # Load clusters data
         self.clusters_data = self.load_clusters_json()
         
         # Status tracking
@@ -47,30 +54,160 @@ class ClusterScraper:
         self.progress = 0.0
         self.start_time = 0.0
         self.pages_scraped = 0
+        self.pages_failed = 0
+        self.pages_processed = 0
         self.total_pages = 0
         self.current_cluster_id = ""
+        self.current_url = ""
         self.error = None
+        
+        # For task manager integration
+        self.task_id = None
+        self.task_manager = None
+        
+        # For callback function
+        self.progress_callback = None
+        
+        self.logger.info(f"ClusterScraper initialized with output_dir={output_dir}, metadata_dir={metadata_dir}")
     
     def _setup_logger(self):
         """Set up logging configuration."""
         logger = logging.getLogger("ClusterScraper")
         logger.setLevel(logging.INFO)
         
-        # Create console handler
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+        # Only add handler if not already added
+        if not logger.handlers:
+            # Create console handler
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
         
         return logger
+    
+    def set_task_id(self, task_id: str) -> None:
+        """
+        Set task ID for integration with a task manager.
+        
+        Args:
+            task_id: Task ID to use for progress reporting
+        """
+        self.task_id = task_id
+        self.logger.info(f"Task ID set to {task_id}")
+    
+    def set_progress_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """
+        Set a callback function for progress reporting.
+        
+        Args:
+            callback: Function that accepts a dictionary of progress information
+        """
+        self.progress_callback = callback
+        self.logger.info("Progress callback function set")
+    
+    def publish_progress(self, force: bool = False) -> None:
+        """
+        Publish current progress to task manager and/or callback function.
+        
+        Args:
+            force: Force publish even if interval conditions not met
+        """
+        # Only publish if we meet the update interval or force is True
+        should_update = (
+            force or 
+            (self.pages_processed % self.progress_update_interval == 0) or
+            (self.total_pages > 0 and 
+             (self.pages_processed / self.total_pages * 100) % self.progress_update_interval < 
+             (1 / self.total_pages * 100))
+        )
+        
+        if not should_update:
+            return
+        
+        # Calculate progress (between 5-60% during scraping phase)
+        if self.total_pages > 0:
+            self.progress = 5.0 + (self.pages_processed / self.total_pages * 55.0)
+        
+        # Build progress info dictionary
+        progress_info = {
+            "status": self.status,
+            "progress": self.progress,
+            "pages_scraped": self.pages_scraped,
+            "pages_failed": self.pages_failed,
+            "pages_processed": self.pages_processed,
+            "total_pages": self.total_pages,
+            "current_cluster": self.current_cluster_id,
+            "current_url": self.current_url,
+            "execution_time_seconds": time.time() - self.start_time if self.start_time > 0 else 0,
+            "error": self.error
+        }
+        
+        # Send to task manager if available
+        if self.task_id:
+            try:
+                # Try to import and use the task manager
+                # This is done here to avoid circular imports
+                from app.utils.task_manager import task_manager
+                self.task_manager = task_manager
+                
+                # Update task status with progress and partial results
+                task_manager.update_task_status(
+                    self.task_id,
+                    progress=self.progress,
+                    result={
+                        "scrape_partial_results": {
+                            "pages_scraped": self.pages_scraped,
+                            "pages_failed": self.pages_failed,
+                            "pages_processed": self.pages_processed,
+                            "total_pages": self.total_pages,
+                            "current_cluster": self.current_cluster_id
+                        }
+                    }
+                )
+                
+                # Add log entry for significant progress milestones
+                if (self.pages_processed % 5 == 0 or force) and self.task_manager:
+                    task_manager.publish_log(
+                        self.task_id,
+                        f"Scraping progress: {self.pages_processed}/{self.total_pages} pages processed, "
+                        f"{self.pages_scraped} successful, {self.pages_failed} failed, "
+                        f"progress: {self.progress:.1f}%",
+                        "info"
+                    )
+            except (ImportError, AttributeError, Exception) as e:
+                self.logger.warning(f"Could not update task manager: {str(e)}")
+        
+        # Send to callback function if available
+        if self.progress_callback:
+            try:
+                self.progress_callback(progress_info)
+            except Exception as e:
+                self.logger.warning(f"Error in progress callback: {str(e)}")
+        
+        # Always log progress for significant milestones or on force
+        if self.pages_processed % 10 == 0 or force:
+            self.logger.info(
+                f"Progress: {self.pages_processed}/{self.total_pages} pages processed, "
+                f"{self.pages_scraped} successful, {self.pages_failed} failed, "
+                f"{self.progress:.1f}%"
+            )
     
     def load_clusters_json(self) -> Optional[Dict[str, Any]]:
         """Load and parse the JSON file containing cluster information."""
         try:
             with open(self.json_file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                self.logger.info(f"Successfully loaded clusters from {self.json_file_path}")
+                return data
+        except FileNotFoundError:
+            self.logger.error(f"Clusters JSON file not found: {self.json_file_path}")
+            return None
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON format in file: {self.json_file_path}")
+            return None
         except Exception as e:
-            self.logger.error(f"Error loading clusters JSON file: {e}")
+            self.logger.error(f"Error loading clusters JSON file: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
     
     def get_cluster_by_id(self, cluster_id: str) -> Optional[Dict[str, Any]]:
@@ -101,21 +238,50 @@ class ClusterScraper:
     
     def get_scraper(self):
         """Create a scraper object using cloudscraper to bypass Cloudflare."""
-        return cloudscraper.create_scraper()
+        return cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'desktop': True
+            }
+        )
     
-    def fetch_page(self, url: str):
-        """Fetch page content using cloudscraper."""
-        scraper = self.get_scraper()
-        response = scraper.get(url, allow_redirects=True)
+    def fetch_page(self, url: str, retry_attempts: int = 3) -> Optional[Any]:
+        """
+        Fetch page content using cloudscraper with retry logic.
         
-        # Check if URL was redirected to a 404 page
-        final_url = response.url
-        if "/404" in final_url or (final_url != url and ("not-found" in final_url or "error" in final_url)):
-            self.logger.warning(f"URL redirected to possible 404 page: {url} -> {final_url}")
-            # Return a modified response with 404 status to signal it should be skipped
-            response.status_code = 404
+        Args:
+            url: URL to fetch
+            retry_attempts: Number of retry attempts for transient errors
+            
+        Returns:
+            Response object or None if failed after retries
+        """
+        self.current_url = url
         
-        return response
+        for attempt in range(retry_attempts + 1):
+            try:
+                scraper = self.get_scraper()
+                response = scraper.get(url, allow_redirects=True, timeout=30)
+                
+                # Check if URL was redirected to a 404 page
+                final_url = response.url
+                if "/404" in final_url or (final_url != url and ("not-found" in final_url or "error" in final_url)):
+                    self.logger.warning(f"URL redirected to possible 404 page: {url} -> {final_url}")
+                    # Return a modified response with 404 status to signal it should be skipped
+                    response.status_code = 404
+                
+                return response
+                
+            except Exception as e:
+                if attempt < retry_attempts:
+                    self.logger.warning(f"Error fetching {url} (attempt {attempt+1}/{retry_attempts+1}): {str(e)}. Retrying...")
+                    time.sleep(2)  # Add a delay before retrying
+                else:
+                    self.logger.error(f"Failed to fetch {url} after {retry_attempts+1} attempts: {str(e)}")
+                    return None
+        
+        return None
     
     def parse_and_convert_to_markdown(self, html: str) -> Tuple[str, str, str]:
         """
@@ -127,111 +293,103 @@ class ClusterScraper:
         Returns:
             Tuple of (markdown_content, clean_filename, page_title)
         """
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        # Remove headers, footers, navigation, and other non-content elements
-        # for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
-        #     class_=['col-lg-2 col-md-2 col-xs-2 col-sm-2 no-padding headerDiv','morph-menu-wrapper','phNumber',
-        #         'show-on-hover topBarMenu portal-button','menu-premier-quick-links-container','mobile-nav',
-        #         'quickContact paddingSidemenuDefault',
-        #         'pum-container popmake theme-2087406 pum-responsive pum-responsive-small responsive size-small',
-        #         'pum-container popmake theme-2087405 pum-responsive pum-responsive-medium responsive size-medium',
-        #         'pum-content popmake-content',' col-sm-10 no-padding classForRes','fontEm13 normalFont marginTop0',
-        #         'col-sm-10 no-padding','countrySelect clearfix','col-sm-2 no-padding',
-        #         ' col-sm-10 no-padding classForRes'
-        # ]):
-        #     tag.decompose()
-
-        for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
-            class_=['mobile-login-field-small-wrapper','sub-page-links-wrapper','header-main-subpages','related-links-wrapper','content-wrapper','mobile-header-main', 'mm-header-nav-links','top-bar','login-field-small-wrapper-subpages','form-small-wrapper','side-nav-inner-page','footer-wrapper','mobile-copyrights-wrapper','privacy-links-wrapper','bread-crums-wrapper','dcp-form']):
-            tag.decompose()
-        
-        # Find and remove all images
-        for img in soup.find_all('img'):
-            img.decompose()
-        
-        # Remove figure elements which might contain images
-        for figure in soup.find_all('figure'):
-            figure.decompose()
-        
-        # Remove picture elements (modern responsive image containers)
-        for picture in soup.find_all('picture'):
-            picture.decompose()
-        
-        # Remove forms
-        # for form in soup.find_all('form'):
-        #     form.decompose()
-        
-        # Remove SVG elements
-        for svg in soup.find_all('svg'):
-            svg.decompose()
-        
-        # Remove sections containing "Apply Now" headings
-        for heading in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            if heading.get_text(strip=True).lower() == "apply now":
-                # Find the parent container
-                parent_to_remove = None
-                current = heading
-                for _ in range(3):
-                    if current.parent:
-                        current = current.parent
-                        if current.name in ['section', 'div', 'form']:
-                            parent_to_remove = current
-                            break
-                
-                if parent_to_remove:
-                    parent_to_remove.decompose()
-                else:
-                    # If no suitable parent found, remove the heading and any following form
-                    for elem in heading.find_next_siblings():
-                        if elem.name == 'form' or ('form' in elem.get('class', '')):
-                            elem.decompose()
-                    heading.decompose()
-        
-        # Try to find main content
-        # content = soup.find_all(['article', 'section', 'main', 'div', 'main id', 'p'], 
-        #                       class_=['content', 'article-body', 'main-content', 'show', 
-        #                              'main-heading', 'tab-content inner-txt-bx', 'container'])
-        content = soup.find_all(['article', 'section', 'main', 'div', 'main id', 'p'], 
-                                class_=['content', 'article-body', 'main-content',  'show', 'main-heading','tab-content inner-txt-bx','container'])
-        
-        if not content:
-            content = soup.body
-        
-        if not content:
-            self.logger.warning("No usable content found.")
-            return "", "", ""
-        
-        # Get the page title
-        title_tag = soup.find('title')
-        if title_tag and title_tag.string:
-            page_title = title_tag.string.strip()
-        else:
-            # Try to find an h1 tag
-            h1_tag = soup.find('h1')
-            if h1_tag:
-                page_title = h1_tag.get_text(strip=True)
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Remove headers, footers, navigation, and other non-content elements
+            for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
+                class_=['mobile-login-field-small-wrapper','sub-page-links-wrapper','header-main-subpages',
+                       'related-links-wrapper','content-wrapper','mobile-header-main', 'mm-header-nav-links',
+                       'top-bar','login-field-small-wrapper-subpages','form-small-wrapper','side-nav-inner-page',
+                       'footer-wrapper','mobile-copyrights-wrapper','privacy-links-wrapper','bread-crums-wrapper',
+                       'dcp-form']):
+                tag.decompose()
+            
+            # Find and remove all images
+            for img in soup.find_all('img'):
+                img.decompose()
+            
+            # Remove figure elements which might contain images
+            for figure in soup.find_all('figure'):
+                figure.decompose()
+            
+            # Remove picture elements (modern responsive image containers)
+            for picture in soup.find_all('picture'):
+                picture.decompose()
+            
+            # Remove SVG elements
+            for svg in soup.find_all('svg'):
+                svg.decompose()
+            
+            # Remove sections containing "Apply Now" headings
+            for heading in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                if heading.get_text(strip=True).lower() == "apply now":
+                    # Find the parent container
+                    parent_to_remove = None
+                    current = heading
+                    for _ in range(3):
+                        if current.parent:
+                            current = current.parent
+                            if current.name in ['section', 'div', 'form']:
+                                parent_to_remove = current
+                                break
+                    
+                    if parent_to_remove:
+                        parent_to_remove.decompose()
+                    else:
+                        # If no suitable parent found, remove the heading and any following form
+                        for elem in heading.find_next_siblings():
+                            if elem.name == 'form' or ('form' in elem.get('class', '')):
+                                elem.decompose()
+                        heading.decompose()
+            
+            # Try to find main content
+            content = soup.find_all(['article', 'section', 'main', 'div', 'main id', 'p'], 
+                                   class_=['content', 'article-body', 'main-content',  'show', 
+                                          'main-heading','tab-content inner-txt-bx','container'])
+            
+            if not content:
+                content = soup.body
+            
+            if not content:
+                self.logger.warning("No usable content found.")
+                return "", "", ""
+            
+            # Get the page title
+            title_tag = soup.find('title')
+            if title_tag and title_tag.string:
+                page_title = title_tag.string.strip()
             else:
-                page_title = "untitled"
-        
-        # Clean up the title to be a valid filename
-        clean_title = re.sub(r'[^\w\s-]', '', page_title).strip()
-        clean_title = re.sub(r'[-\s]+', '-', clean_title)
-        
-        # If title is still empty or just contains special characters that were removed
-        if not clean_title:
-            clean_title = "untitled-content"
-        
-        # Convert to Markdown
-        markdown = md(str(content), heading_style="ATX")
-        
-        # Post-process the markdown to remove any remaining image markdown syntax
-        markdown = re.sub(r'!\[.*?\]\(.*?\)', '', markdown)
-        
-        # Also remove any standalone image URLs that might remain
-        markdown = re.sub(r'https?://\S+\.(jpg|jpeg|png|gif|svg|webp)(\?\S+)?', '', markdown, flags=re.IGNORECASE)
-        
-        return markdown, clean_title, page_title
+                # Try to find an h1 tag
+                h1_tag = soup.find('h1')
+                if h1_tag:
+                    page_title = h1_tag.get_text(strip=True)
+                else:
+                    page_title = "untitled"
+            
+            # Clean up the title to be a valid filename
+            clean_title = re.sub(r'[^\w\s-]', '', page_title).strip()
+            clean_title = re.sub(r'[-\s]+', '-', clean_title)
+            
+            # If title is still empty or just contains special characters that were removed
+            if not clean_title:
+                clean_title = "untitled-content"
+            
+            # Convert to Markdown
+            markdown = md(str(content), heading_style="ATX")
+            
+            # Post-process the markdown to remove any remaining image markdown syntax
+            markdown = re.sub(r'!\[.*?\]\(.*?\)', '', markdown)
+            
+            # Also remove any standalone image URLs that might remain
+            markdown = re.sub(r'https?://\S+\.(jpg|jpeg|png|gif|svg|webp)(\?\S+)?', '', markdown, flags=re.IGNORECASE)
+            
+            return markdown, clean_title, page_title
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing HTML: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return "", "", ""
     
     def determine_source_from_url(self, url: str) -> str:
         """
@@ -331,24 +489,44 @@ class ClusterScraper:
         
         return dir_path
     
-    def scrape_clusters(self, cluster_ids: List[str]) -> Dict[str, Any]:
+    def scrape_clusters(
+        self, 
+        cluster_ids: List[str],
+        task_id: Optional[str] = None,
+        callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    ) -> Dict[str, Any]:
         """
-        Scrape all URLs in the specified clusters.
+        Scrape all URLs in the specified clusters with enhanced progress tracking.
         
         Args:
             cluster_ids: List of IDs of the clusters to scrape
+            task_id: Task ID for integration with task manager
+            callback: Function to call with progress updates
             
         Returns:
             Dictionary with scraping results
         """
-        import time
+        # Set up task ID and callback
+        if task_id:
+            self.set_task_id(task_id)
+        
+        if callback:
+            self.set_progress_callback(callback)
+        
+        # Initialize tracking
         self.start_time = time.time()
-        self.status = "processing"
+        self.status = "initializing"
         self.progress = 0.0
         self.pages_scraped = 0
+        self.pages_failed = 0
+        self.pages_processed = 0
+        self.total_pages = 0
         self.error = None
         
-        # Create metadata directory if it doesn't exist
+        self.publish_progress(force=True)
+        
+        # Create output directories if they don't exist
+        os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.metadata_dir, exist_ok=True)
         
         # Calculate expiry date if expiry_days is provided
@@ -356,62 +534,96 @@ class ClusterScraper:
         if self.expiry_days is not None:
             expiry_date = (datetime.now() + timedelta(days=self.expiry_days)).strftime('%Y-%m-%d')
         
+        # Update status and progress
+        self.status = "counting_pages"
+        self.publish_progress(force=True)
+        
         # Count total URLs to scrape for progress tracking
         self.total_pages = 0
+        valid_clusters = []
+        
         for cluster_id in cluster_ids:
             cluster = self.get_cluster_by_id(cluster_id)
             if cluster:
-                self.total_pages += len(cluster.get("urls", []))
+                urls = cluster.get("urls", [])
+                self.total_pages += len(urls)
+                valid_clusters.append((cluster_id, cluster, urls))
+        
+        if self.total_pages == 0:
+            self.logger.warning("No pages found to scrape in the specified clusters")
+            self.status = "completed"
+            self.progress = 5.0
+            self.publish_progress(force=True)
+            
+            return {
+                "status": "completed",
+                "clusters_scraped": [],
+                "pages_scraped": 0,
+                "pages_failed": 0,
+                "execution_time_seconds": time.time() - self.start_time
+            }
+        
+        self.logger.info(f"Found {self.total_pages} pages to scrape across {len(valid_clusters)} clusters")
+        
+        # Update status and progress
+        self.status = "scraping"
+        self.progress = 5.0
+        self.publish_progress(force=True)
         
         results = {
+            "status": "success",
             "clusters_scraped": [],
             "pages_scraped": 0,
+            "pages_failed": 0,
             "errors": []
         }
         
-        for cluster_id in cluster_ids:
+        # Process each cluster
+        for cluster_id, cluster, urls in valid_clusters:
             self.current_cluster_id = cluster_id
-            cluster = self.get_cluster_by_id(cluster_id)
-            if not cluster:
-                self.logger.warning(f"Skipping cluster {cluster_id} - not found")
-                results["errors"].append({
-                    "cluster_id": cluster_id,
-                    "error": "Cluster not found"
-                })
-                continue
-            
-            urls = cluster.get("urls", [])
-            
-            if not urls:
-                self.logger.warning(f"No URLs found in cluster {cluster_id}. Skipping.")
-                continue
+            self.publish_progress(force=True)
             
             self.logger.info(f"Found {len(urls)} URLs in cluster {cluster_id}. Starting scraping...")
             
             cluster_results = {
                 "cluster_id": cluster_id,
                 "urls_scraped": 0,
+                "urls_failed": 0,
                 "errors": []
             }
             
+            # Process each URL in the cluster
             for url in urls:
                 try:
                     self.logger.info(f"Scraping: {url}")
-                    
-                    # Update progress
-                    self.pages_scraped += 1
-                    self.progress = min(99.0, (self.pages_scraped / self.total_pages) * 100)
+                    self.current_url = url
                     
                     # Fetch the page
                     response = self.fetch_page(url)
                     
+                    # If fetch failed completely
+                    if response is None:
+                        self.pages_failed += 1
+                        self.pages_processed += 1
+                        cluster_results["urls_failed"] += 1
+                        cluster_results["errors"].append({
+                            "url": url,
+                            "error": "Failed to fetch page"
+                        })
+                        self.publish_progress()
+                        continue
+                    
                     # Only process pages with 200 status code
                     if response.status_code != 200:
                         self.logger.warning(f"Skipping URL {url} - Status code: {response.status_code}")
+                        self.pages_failed += 1
+                        self.pages_processed += 1
+                        cluster_results["urls_failed"] += 1
                         cluster_results["errors"].append({
                             "url": url,
                             "error": f"Status code: {response.status_code}"
                         })
+                        self.publish_progress()
                         continue
                     
                     # Parse and convert to markdown
@@ -440,32 +652,51 @@ class ClusterScraper:
                             expiry_date
                         )
                         
-                        # Update counter
+                        # Update counters
+                        self.pages_scraped += 1
                         cluster_results["urls_scraped"] += 1
                     else:
                         self.logger.warning("No meaningful content extracted.")
+                        self.pages_failed += 1
+                        cluster_results["urls_failed"] += 1
                         cluster_results["errors"].append({
                             "url": url,
                             "error": "No meaningful content extracted"
                         })
                 
                 except Exception as e:
-                    self.logger.error(f"Error processing {url}: {e}")
+                    self.logger.error(f"Error processing {url}: {str(e)}")
+                    self.logger.error(traceback.format_exc())
+                    
+                    self.pages_failed += 1
+                    cluster_results["urls_failed"] += 1
                     cluster_results["errors"].append({
                         "url": url,
                         "error": str(e)
                     })
-                    
-                    # Continue with the next URL
-                    continue
+                
+                finally:
+                    # Update processed count and progress regardless of success/failure
+                    self.pages_processed += 1
+                    self.publish_progress()
             
             # Add cluster results
             results["clusters_scraped"].append(cluster_results)
-            results["pages_scraped"] += cluster_results["urls_scraped"]
+        
+        # Update final counts
+        results["pages_scraped"] = self.pages_scraped
+        results["pages_failed"] = self.pages_failed
+        results["total_pages"] = self.total_pages
+        results["execution_time_seconds"] = time.time() - self.start_time
         
         # Update status
         self.status = "completed"
-        self.progress = 100.0
+        self.progress = 60.0  # End at 60% as in the pipeline
+        self.publish_progress(force=True)
+        
+        self.logger.info(
+            f"Scraping completed. Scraped {self.pages_scraped} pages from {len(results['clusters_scraped'])} clusters."
+        )
         
         return results
     
@@ -504,13 +735,15 @@ class ClusterScraper:
     
     def get_status(self) -> Dict[str, Any]:
         """Get the current status of the scraper."""
-        import time
         return {
             'status': self.status,
             'progress': self.progress,
             'pages_scraped': self.pages_scraped,
+            'pages_failed': self.pages_failed,
+            'pages_processed': self.pages_processed,
             'total_pages': self.total_pages,
             'current_cluster': self.current_cluster_id,
+            'current_url': self.current_url,
             'execution_time_seconds': time.time() - self.start_time if self.start_time > 0 else 0,
             'error': self.error
         }
