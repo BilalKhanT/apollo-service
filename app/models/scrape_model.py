@@ -9,7 +9,7 @@ class ScrapingRequest(BaseModel):
 class ScrapingStatus(BaseModel):
     id: str
     status: str
-    progress: float = 0.0
+    progress: float
     pages_scraped: int = 0
     files_downloaded: int = 0
     error: Optional[str] = None

@@ -2,6 +2,7 @@ from datetime import datetime
 import os
 import logging
 import time
+import traceback
 from typing import Dict, Any, List, Optional
 import json
 
@@ -536,7 +537,7 @@ class ApolloOrchestrator:
         year_clusters_file: str = None
     ) -> Dict[str, Any]:
         """
-        Run the scraping and downloading workflow.
+        Run the scraping and downloading workflow with enhanced progress tracking.
         
         Args:
             task_id: Task ID for tracking progress
@@ -548,19 +549,27 @@ class ApolloOrchestrator:
         Returns:
             Dictionary with scraping and downloading results
         """
-        # Update task status
+        # Initialize task status
         task_manager.update_task_status(
             task_id,
-            status="running",
+            status="initializing",
             progress=0.0
         )
         
-        # Log start of the scraping workflow
+        # Log start of the workflow
         self.publish_log(task_id, "Starting scrape and download workflow", "info")
         
         try:
+            # === INITIALIZATION PHASE (0-5%) ===
+            # Update task status
+            task_manager.update_task_status(
+                task_id,
+                status="checking_files",
+                progress=1.0
+            )
+            
             # Use the latest files if not specified
-            if not url_clusters_file:
+            if not url_clusters_file and cluster_ids:
                 # Find the most recent URL clusters file
                 cluster_files = [f for f in os.listdir(self.clusters_dir) if f.endswith("_url_clusters.json")]
                 if not cluster_files:
@@ -584,7 +593,14 @@ class ApolloOrchestrator:
                 year_clusters_file = os.path.join(self.clusters_dir, year_files[0])
                 self.publish_log(task_id, f"Using most recent year clusters file: {os.path.basename(year_clusters_file)}", "info")
             
-            # Step 1: Content scraping
+            # Update progress after file detection
+            task_manager.update_task_status(
+                task_id,
+                status="preparing",
+                progress=3.0
+            )
+            
+            # === SCRAPING PHASE (5-60%) ===
             if cluster_ids:
                 task_manager.update_task_status(
                     task_id,
@@ -597,8 +613,8 @@ class ApolloOrchestrator:
                 scrape_output_dir = os.path.join(self.scrape_dir, f"scrape_{timestamp}")
                 metadata_output_dir = os.path.join(self.metadata_dir, f"metadata_{timestamp}")
                 
-                # Create the scraper
-                self.publish_log(task_id, f"Scraping clusters: {cluster_ids}", "info")
+                # Create the scraper with task ID for progress tracking
+                self.publish_log(task_id, f"Preparing to scrape {len(cluster_ids)} clusters", "info")
                 scraper = ClusterScraper(
                     json_file_path=url_clusters_file,
                     output_dir=scrape_output_dir,
@@ -606,8 +622,9 @@ class ApolloOrchestrator:
                     expiry_days=EXPIRY_DAYS
                 )
                 
-                # Scrape the clusters
-                scrape_result = scraper.scrape_clusters(cluster_ids)
+                # Scrape the clusters with task ID for continuous progress updates
+                self.publish_log(task_id, f"Starting scraping of clusters: {cluster_ids}", "info")
+                scrape_result = scraper.scrape_clusters(cluster_ids, task_id=task_id)
                 
                 # Log scraping results
                 self.publish_log(
@@ -616,7 +633,7 @@ class ApolloOrchestrator:
                     "info"
                 )
                 
-                # Update progress
+                # Update progress to 60%
                 task_manager.update_task_status(
                     task_id,
                     progress=60.0,
@@ -641,7 +658,22 @@ class ApolloOrchestrator:
                     }
                 )
             
-            # Step 2: File downloading
+            # === TRANSITION PHASE (60-65%) ===
+            # Add a brief "preparing download" phase for smoother transition
+            if years:
+                task_manager.update_task_status(
+                    task_id,
+                    status="preparing_download",
+                    progress=62.0
+                )
+                
+                # Log the transition
+                self.publish_log(task_id, "Scraping phase complete. Preparing for download phase...", "info")
+                
+                # Short sleep to ensure status updates are visible
+                time.sleep(0.5)
+            
+            # === DOWNLOADING PHASE (65-90%) ===
             if years:
                 task_manager.update_task_status(
                     task_id,
@@ -653,18 +685,20 @@ class ApolloOrchestrator:
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
                 download_output_dir = os.path.join(self.download_dir, f"download_{timestamp}")
                 
-                # Create the downloader
-                self.publish_log(task_id, f"Downloading files for years: {years}", "info")
+                # Create the downloader with task ID for progress tracking
+                self.publish_log(task_id, f"Preparing to download files for years: {years}", "info")
                 downloader = FileDownloader(
                     max_workers=MAX_DOWNLOAD_WORKERS,
                     timeout=CRAWLER_TIMEOUT
                 )
                 
-                # Download the files
+                # Download the files with task ID for continuous progress updates
+                self.publish_log(task_id, f"Starting download of files for years: {years}", "info")
                 download_result = downloader.download_files_by_year(
                     json_file=year_clusters_file,
                     years_to_download=years,
-                    base_folder=download_output_dir
+                    base_folder=download_output_dir,
+                    task_id=task_id
                 )
                 
                 # Log downloading results
@@ -674,7 +708,7 @@ class ApolloOrchestrator:
                     "info"
                 )
                 
-                # Update progress
+                # Update progress to 90%
                 task_manager.update_task_status(
                     task_id,
                     progress=90.0,
@@ -700,6 +734,18 @@ class ApolloOrchestrator:
                     }
                 )
             
+            # === FINALIZATION PHASE (90-100%) ===
+            task_manager.update_task_status(
+                task_id,
+                status="finalizing",
+                progress=95.0
+            )
+            
+            self.publish_log(task_id, "Finalizing workflow and generating summary...", "info")
+            
+            # Add a brief delay to show the finalizing step
+            time.sleep(0.5)
+            
             # Update status to completed
             task_manager.update_task_status(
                 task_id,
@@ -713,11 +759,14 @@ class ApolloOrchestrator:
             return task_manager.get_task_status(task_id)
         
         except Exception as e:
-            self.publish_log(task_id, f"Error in scrape/download workflow: {str(e)}", "error")
+            error_msg = f"Error in scrape/download workflow: {str(e)}"
+            self.publish_log(task_id, error_msg, "error")
+            self.publish_log(task_id, traceback.format_exc(), "error")
+            
             task_manager.update_task_status(
                 task_id,
                 status="failed",
-                error=str(e)
+                error=error_msg
             )
             return task_manager.get_task_status(task_id)
     
