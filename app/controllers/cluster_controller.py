@@ -1,0 +1,56 @@
+from typing import Dict, Any, Optional
+from fastapi import HTTPException
+from app.utils.task_manager import task_manager
+from app.utils.orchestrator import orchestrator
+
+class ClusterController:
+    @staticmethod
+    async def get_clusters(crawl_task_id: Optional[str] = None) -> Dict[str, Any]:
+        url_clusters_file = None
+        year_clusters_file = None
+        
+        response = {
+            "clusters": [],
+            "years": [],
+            "clusters_available": False,
+            "years_available": False
+        }
+        
+        if crawl_task_id:
+            task_status = task_manager.get_task_status(crawl_task_id)
+            if not task_status:
+                raise HTTPException(status_code=404, detail=f"Task {crawl_task_id} not found")
+            
+            if task_status["status"] != "completed":
+                raise HTTPException(status_code=400, detail=f"Task {crawl_task_id} is not completed")
+            
+            result = task_status.get("result", {})
+            output_files = result.get("output_files", {})
+            
+            if result.get("cluster_complete", False):
+                url_clusters_file = output_files.get("url_clusters_file")
+                response["clusters_available"] = True
+            else:
+                response["clusters_error"] = f"Task {crawl_task_id} does not have cluster results"
+            
+            if result.get("year_extraction_complete", False):
+                year_clusters_file = output_files.get("year_clusters_file")
+                response["years_available"] = True
+            else:
+                response["years_error"] = f"Task {crawl_task_id} does not have year extraction results"
+        
+        if crawl_task_id is None or response["clusters_available"]:
+            try:
+                clusters = orchestrator.get_available_clusters(url_clusters_file)
+                response["clusters"] = clusters
+            except Exception as e:
+                response["clusters_error"] = f"Error retrieving clusters: {str(e)}"
+        
+        if crawl_task_id is None or response["years_available"]:
+            try:
+                years = orchestrator.get_available_years(year_clusters_file)
+                response["years"] = years
+            except Exception as e:
+                response["years_error"] = f"Error retrieving years: {str(e)}"
+        
+        return response
