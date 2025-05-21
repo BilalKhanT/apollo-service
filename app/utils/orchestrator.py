@@ -868,6 +868,71 @@ class ApolloOrchestrator:
         except Exception as e:
             logger.error(f"Error getting available years: {str(e)}")
             return []
+        
+    def get_cluster_by_id(self, cluster_id: str, url_clusters_file: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not url_clusters_file:
+            cluster_files = [f for f in os.listdir(self.clusters_dir) if f.endswith("_url_clusters.json")]
+            if not cluster_files:
+                return None
+            
+            cluster_files.sort(reverse=True)  
+            url_clusters_file = os.path.join(self.clusters_dir, cluster_files[0])
+        
+        try:
+            with open(url_clusters_file, 'r') as f:
+                clusters_data = json.load(f)
+            
+            for domain, domain_data in clusters_data.get("clusters", {}).items():
+                if domain_data.get("id") == cluster_id:
+                    return {
+                        "id": domain_data.get("id"),
+                        "name": domain,
+                        "type": "domain",
+                        "url_count": domain_data.get("count", 0),
+                        "clusters": domain_data.get("clusters", [])
+                    }
+                
+                for cluster in domain_data.get("clusters", []):
+                    if cluster.get("id") == cluster_id:
+                        return {
+                            "id": cluster.get("id"),
+                            "name": f"{domain} - {cluster.get('path', 'unknown-path')}",
+                            "type": "path",
+                            "url_count": cluster.get("url_count", 0),
+                            "urls": cluster.get("urls", [])
+                        }
+            
+            return None
+        
+        except Exception as e:
+            self.logger.error(f"Error getting cluster by ID: {str(e)}")
+            return None
+        
+    def get_year_by_id(self, year: str, year_clusters_file: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not year_clusters_file:
+            year_files = [f for f in os.listdir(self.clusters_dir) if f.endswith("_year_clusters.json")]
+            if not year_files:
+                return None
+            
+            year_files.sort(reverse=True)  
+            year_clusters_file = os.path.join(self.clusters_dir, year_files[0])
+        
+        try:
+            with open(year_clusters_file, 'r') as f:
+                year_data = json.load(f)
+            
+            if year in year_data:
+                return {
+                    "year": year,
+                    "files_count": len(year_data[year]),
+                    "files": year_data[year]
+                }
+            
+            return None
+        
+        except Exception as e:
+            self.logger.error(f"Error getting year by ID: {str(e)}")
+            return None
 
 # Create a global orchestrator instance
 orchestrator = ApolloOrchestrator()

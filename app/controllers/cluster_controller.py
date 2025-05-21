@@ -54,3 +54,55 @@ class ClusterController:
                 response["years_error"] = f"Error retrieving years: {str(e)}"
         
         return response
+    
+    @staticmethod
+    async def get_cluster_by_id(cluster_id: str, crawl_task_id: Optional[str] = None) -> Dict[str, Any]:
+        url_clusters_file = None
+        
+        if crawl_task_id:
+            task_status = task_manager.get_task_status(crawl_task_id)
+            if not task_status:
+                raise HTTPException(status_code=404, detail=f"Task {crawl_task_id} not found")
+            
+            if task_status["status"] != "completed":
+                raise HTTPException(status_code=400, detail=f"Task {crawl_task_id} is not completed")
+            
+            result = task_status.get("result", {})
+            output_files = result.get("output_files", {})
+            
+            if result.get("cluster_complete", False):
+                url_clusters_file = output_files.get("url_clusters_file")
+            else:
+                raise HTTPException(status_code=400, detail=f"Task {crawl_task_id} does not have cluster results")
+        
+        cluster = orchestrator.get_cluster_by_id(cluster_id, url_clusters_file)
+        if not cluster:
+            raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")
+        
+        return cluster
+
+    @staticmethod
+    async def get_year_by_id(year: str, crawl_task_id: Optional[str] = None) -> Dict[str, Any]:
+        year_clusters_file = None
+        
+        if crawl_task_id:
+            task_status = task_manager.get_task_status(crawl_task_id)
+            if not task_status:
+                raise HTTPException(status_code=404, detail=f"Task {crawl_task_id} not found")
+            
+            if task_status["status"] != "completed":
+                raise HTTPException(status_code=400, detail=f"Task {crawl_task_id} is not completed")
+            
+            result = task_status.get("result", {})
+            output_files = result.get("output_files", {})
+            
+            if result.get("year_extraction_complete", False):
+                year_clusters_file = output_files.get("year_clusters_file")
+            else:
+                raise HTTPException(status_code=400, detail=f"Task {crawl_task_id} does not have year extraction results")
+        
+        year_data = orchestrator.get_year_by_id(year, year_clusters_file)
+        if not year_data:
+            raise HTTPException(status_code=404, detail=f"Year {year} not found")
+        
+        return year_data
