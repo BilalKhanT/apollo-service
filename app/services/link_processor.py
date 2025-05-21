@@ -4,59 +4,35 @@ import threading
 import os
 import time
 import logging
+import queue
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Set, Any, Optional
+from typing import List, Dict, Set, Any, Optional, Tuple
 
 class LinkProcessor:
-    """
-    A class to process and categorize links found by the crawler.
-    """
-    
     def __init__(
         self,
         input_file: str = "all_links.json",
         output_file: str = "categorized_links.json",
-        num_workers: int = 8,
+        num_workers: int = 20,
         file_extensions: Optional[List[str]] = None,
         social_media_keywords: Optional[List[str]] = None,
-        bank_keywords: Optional[List[str]] = None
+        bank_keywords: Optional[List[str]] = None,
+        chunk_size: int = 500  
     ):
-        """
-        Initialize the Link Processor.
-
-        Args:
-            input_file: Path to all_links.json file
-            output_file: Path to save categorized links
-            num_workers: Number of worker threads
-            file_extensions: List of file extensions to identify files
-            social_media_keywords: List of keywords to identify social media links
-            bank_keywords: List of keywords to identify bank-related links
-        """
-        # Setup logger
         self.logger = self._setup_logger()
-        
-        # Store configuration
         self.input_file = input_file
         self.output_file = output_file
         self.num_workers = num_workers
-        
-        # Set up categorization patterns
-        # Default file extensions if none provided
+        self.chunk_size = chunk_size
         self.file_extensions = file_extensions or [
             'pdf', 'xls', 'xlsx', 'doc', 'docx', 'ppt', 'pptx',
             'csv', 'txt', 'rtf', 'zip', 'rar', 'tar', 'gz', 'xlsb'
         ]
-        
-        # Default social media keywords if none provided
         self.social_media_keywords = social_media_keywords or [
             'instagram', 'facebook', 'linkedin', 'twitter', 'tiktok',
             'youtube', 'apps.google', 'appstore', 'play.google', 'app.apple'
         ]
-        
-        # Default bank keywords if none provided
         self.bank_keywords = bank_keywords or ['bafl', 'falah']
-        
-        # Compile regex patterns for efficient matching
         self.file_pattern = re.compile(
             fr'\.({"|".join(self.file_extensions)})($|\?)',
             re.IGNORECASE
@@ -69,25 +45,23 @@ class LinkProcessor:
             fr'({"|".join(self.bank_keywords)})',
             re.IGNORECASE
         )
-        
-        # Result containers with thread safety
         self.file_links: Set[str] = set()
         self.social_media_links: Set[str] = set()
         self.bank_links: Set[str] = set()
         self.misc_links: Set[str] = set()
         self.lock = threading.Lock()
-        
-        # Status tracking
+        self.work_queue = queue.Queue()
         self.status = "initialized"
         self.progress = 0.0
         self.start_time = 0.0
+        self.processed_counter = 0
+        self.processed_lock = threading.Lock()
+        self.logger.info(f"LinkProcessor initialized with {num_workers} workers and chunk_size={chunk_size}")
     
     def _setup_logger(self):
-        """Set up logging configuration."""
         logger = logging.getLogger("LinkProcessor")
         logger.setLevel(logging.INFO)
-        
-        # Create console handler
+
         handler = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
@@ -96,7 +70,6 @@ class LinkProcessor:
         return logger
     
     def load_links(self) -> List[str]:
-        """Load links from the JSON file."""
         try:
             with open(self.input_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -114,42 +87,26 @@ class LinkProcessor:
             return []
     
     def categorize_link(self, link: str) -> str:
-        """
-        Categorize a single link.
-
-        Priority order:
-        1. First check if it's a social media link
-        2. Then check if it's a miscellaneous link (no bank keyword)
-        3. Then check if it's a file link
-        4. Finally check if it's a bank-related link
-
-        Returns:
-            Category name: 'social_media', 'misc', 'file', or 'bank'
-        """
-        # Check if it's a social media link
         if self.social_media_pattern.search(link):
             return 'social_media'
-        
-        # Check if it's NOT a bank link (miscellaneous)
+
         elif not self.bank_pattern.search(link):
             return 'misc'
-        
-        # Check if it's a file link
+
         elif self.file_pattern.search(link):
             return 'file'
-        
-        # If none of the above, it's a bank link
+
         else:
             return 'bank'
     
-    def process_links_chunk(self, links_chunk: List[str], chunk_index: int, total_chunks: int) -> None:
-        """Process a chunk of links and categorize them."""
+    def process_chunk(self, chunk_id: int, links: List[str]) -> Tuple[Set[str], Set[str], Set[str], Set[str]]:
         local_file_links: Set[str] = set()
         local_social_media_links: Set[str] = set()
         local_bank_links: Set[str] = set()
         local_misc_links: Set[str] = set()
         
-        for i, link in enumerate(links_chunk):
+        self.logger.info(f"Processing chunk {chunk_id} with {len(links)} links")
+        for i, link in enumerate(links):
             category = self.categorize_link(link)
             
             if category == 'file':
@@ -160,44 +117,57 @@ class LinkProcessor:
                 local_bank_links.add(link)
             else:
                 local_misc_links.add(link)
-            
-            # Update progress every 100 links
+
             if i % 100 == 0:
-                # Calculate progress: current chunk progress + completed chunks
-                chunk_progress = (i / len(links_chunk)) / total_chunks
-                completed_chunks_progress = chunk_index / total_chunks
-                self.progress = min(99.0, (completed_chunks_progress + chunk_progress) * 100)
+                with self.processed_lock:
+                    self.processed_counter += 100
+
+        with self.processed_lock:
+            remaining = len(links) % 100
+            if remaining > 0:
+                self.processed_counter += remaining
         
-        # Acquire lock once to update all collections
-        with self.lock:
-            self.file_links.update(local_file_links)
-            self.social_media_links.update(local_social_media_links)
-            self.bank_links.update(local_bank_links)
-            self.misc_links.update(local_misc_links)
-        
-        # Update progress for completed chunk
-        self.progress = min(99.0, ((chunk_index + 1) / total_chunks) * 100)
+        return local_file_links, local_social_media_links, local_bank_links, local_misc_links
     
-    def divide_links_into_chunks(self, links: List[str]) -> List[List[str]]:
-        """Divide links into equal chunks for worker threads."""
-        chunk_size = max(1, len(links) // self.num_workers)
-        return [
-            links[i:i + chunk_size]
-            for i in range(0, len(links), chunk_size)
-        ]
+    def worker_thread(self, worker_id: int) -> None:
+        while True:
+            try:
+                chunk_data = self.work_queue.get(block=False)
+                if chunk_data is None:
+                    self.work_queue.task_done()
+                    break
+                
+                chunk_id, links = chunk_data
+
+                local_results = self.process_chunk(chunk_id, links)
+
+                with self.lock:
+                    self.file_links.update(local_results[0])
+                    self.social_media_links.update(local_results[1])
+                    self.bank_links.update(local_results[2])
+                    self.misc_links.update(local_results[3])
+
+                self.work_queue.task_done()
+
+                total_links = len(self.file_links) + len(self.social_media_links) + len(self.bank_links) + len(self.misc_links)
+                self.logger.debug(f"Worker {worker_id} completed chunk {chunk_id}. Total links processed: {total_links}")
+                
+            except queue.Empty:
+                break
+            except Exception as e:
+                self.logger.error(f"Error in worker {worker_id}: {str(e)}")
+                self.work_queue.task_done()
     
     def process(self) -> Dict[str, Any]:
-        """Process all links and categorize them."""
+        import threading
+        
         self.start_time = time.time()
         self.status = "processing"
         self.progress = 0.0
+        self.processed_counter = 0
         
         self.logger.info(f"Starting to process links from {self.input_file}")
-        
-        # Load links from JSON
         all_links = self.load_links()
-        
-        # Create empty result structure for when no links are found
         empty_results = {
             'summary': {
                 'total_links': 0,
@@ -216,8 +186,6 @@ class LinkProcessor:
         if not all_links:
             self.logger.error("No links found to process")
             self.status = "error"
-            
-            # Save empty results to JSON
             empty_results['summary']['processing_time_seconds'] = time.time() - self.start_time
             os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
             with open(self.output_file, 'w', encoding='utf-8') as f:
@@ -228,24 +196,53 @@ class LinkProcessor:
         
         total_links = len(all_links)
         self.logger.info(f"Loaded {total_links} links for processing")
+        self.file_links.clear()
+        self.social_media_links.clear()
+        self.bank_links.clear()
+        self.misc_links.clear()
+
+        chunks = []
+        for i in range(0, total_links, self.chunk_size):
+            chunk_id = i // self.chunk_size
+            chunk_links = all_links[i:i + self.chunk_size]
+            chunks.append((chunk_id, chunk_links))
         
-        # Divide links into chunks for parallel processing
-        chunks = self.divide_links_into_chunks(all_links)
-        total_chunks = len(chunks)
-        self.logger.info(f"Divided links into {total_chunks} chunks for {self.num_workers} workers")
+        self.logger.info(f"Created {len(chunks)} chunks of size {self.chunk_size}")
+        for chunk in chunks:
+            self.work_queue.put(chunk)
+
+        workers = []
+        for i in range(self.num_workers):
+            worker = threading.Thread(target=self.worker_thread, args=(i,))
+            worker.daemon = True
+            worker.start()
+            workers.append(worker)
+
+        def update_progress():
+            while sum(worker.is_alive() for worker in workers) > 0:
+                if total_links > 0:
+                    with self.processed_lock:
+                        processed = min(self.processed_counter, total_links)
+                        self.progress = min(99.0, (processed / total_links) * 100)
+                
+                self.logger.info(f"Progress: {self.progress:.1f}% ({processed}/{total_links} links processed)")
+                time.sleep(1.0)  
         
-        # Process chunks in parallel
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            futures = [
-                executor.submit(self.process_links_chunk, chunk, idx, total_chunks)
-                for idx, chunk in enumerate(chunks)
-            ]
-            
-            # Wait for all tasks to complete
-            for future in futures:
-                future.result()
-        
-        # Convert sets to lists for JSON serialization
+        progress_thread = threading.Thread(target=update_progress)
+        progress_thread.daemon = True
+        progress_thread.start()
+
+        self.work_queue.join()
+
+        for _ in range(self.num_workers):
+            self.work_queue.put(None)
+
+        for worker in workers:
+            worker.join()
+
+        self.progress = 99.9 
+        progress_thread.join(timeout=0.5)  
+
         results = {
             'summary': {
                 'total_links': total_links,
@@ -260,23 +257,18 @@ class LinkProcessor:
             'bank_links': sorted(list(self.bank_links)),
             'misc_links': sorted(list(self.misc_links))
         }
-        
-        # Save results to JSON
+
         os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
         with open(self.output_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2)
         
         self.logger.info(f"Processing completed in {time.time() - self.start_time:.2f} seconds")
         self.logger.info(f"Results saved to {self.output_file}")
-        
-        # Update status
         self.status = "completed"
         self.progress = 100.0
-        
         return results
     
     def get_status(self) -> Dict[str, Any]:
-        """Get the current status of the processor."""
         return {
             'status': self.status,
             'progress': self.progress,

@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import logging
 import traceback
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 
 class ClusterScraper:
@@ -24,7 +26,8 @@ class ClusterScraper:
         output_dir: str = "scraped_content",
         metadata_dir: str = "document_metadata",
         expiry_days: Optional[int] = None,
-        progress_update_interval: int = 2  # Update progress every 2 pages or 2% progress
+        progress_update_interval: int = 2,  # Update progress every 2 pages or 2% progress
+        max_workers: int = 20  # Number of concurrent workers for scraping
     ):
         """
         Initialize the cluster scraper with enhanced progress tracking.
@@ -35,6 +38,7 @@ class ClusterScraper:
             metadata_dir: Directory for saving metadata files
             expiry_days: Number of days until document expiry
             progress_update_interval: How often to update progress (pages or percentage)
+            max_workers: Maximum number of concurrent scraping workers
         """
         # Setup logger
         self.logger = self._setup_logger()
@@ -45,6 +49,7 @@ class ClusterScraper:
         self.metadata_dir = metadata_dir
         self.expiry_days = expiry_days
         self.progress_update_interval = progress_update_interval
+        self.max_workers = max_workers
         
         # Load clusters data
         self.clusters_data = self.load_clusters_json()
@@ -61,6 +66,9 @@ class ClusterScraper:
         self.current_url = ""
         self.error = None
         
+        # Thread safety for counters
+        self.counter_lock = threading.Lock()
+        
         # For task manager integration
         self.task_id = None
         self.task_manager = None
@@ -68,7 +76,7 @@ class ClusterScraper:
         # For callback function
         self.progress_callback = None
         
-        self.logger.info(f"ClusterScraper initialized with output_dir={output_dir}, metadata_dir={metadata_dir}")
+        self.logger.info(f"ClusterScraper initialized with output_dir={output_dir}, metadata_dir={metadata_dir}, max_workers={max_workers}")
     
     def _setup_logger(self):
         """Set up logging configuration."""
@@ -489,6 +497,102 @@ class ClusterScraper:
         
         return dir_path
     
+    def process_url(self, url: str, cluster_id: str, expiry_date: Optional[str]) -> Dict[str, Any]:
+        """
+        Process a single URL - thread-safe implementation for parallel processing.
+        
+        Args:
+            url: URL to process
+            cluster_id: ID of the cluster the URL belongs to
+            expiry_date: Expiry date for the document
+            
+        Returns:
+            Dictionary with processing result
+        """
+        result = {
+            "url": url,
+            "success": False,
+            "error": None
+        }
+        
+        try:
+            self.logger.info(f"Scraping: {url}")
+            
+            # Fetch the page
+            response = self.fetch_page(url)
+            
+            # If fetch failed completely
+            if response is None:
+                result["error"] = "Failed to fetch page"
+                with self.counter_lock:
+                    self.pages_failed += a
+                    self.pages_processed += 1
+                    self.publish_progress()
+                return result
+            
+            # Only process pages with 200 status code
+            if response.status_code != 200:
+                result["error"] = f"Status code: {response.status_code}"
+                with self.counter_lock:
+                    self.pages_failed += 1
+                    self.pages_processed += 1
+                    self.publish_progress()
+                return result
+            
+            # Parse and convert to markdown
+            html = response.text
+            markdown_content, filename_base, document_title = self.parse_and_convert_to_markdown(html)
+            
+            if markdown_content:
+                # Create directory structure based on URL path
+                dir_path = self.url_to_directory_path(url)
+                os.makedirs(dir_path, exist_ok=True)
+                
+                # Save the markdown content
+                file_path = os.path.join(dir_path, f"{filename_base}.md")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(markdown_content)
+                
+                self.logger.info(f"Content saved to: {file_path}")
+                
+                # Create the metadata file
+                self.create_metadata_file(
+                    self.metadata_dir,
+                    filename_base,
+                    document_title,
+                    url,
+                    markdown_content,
+                    expiry_date
+                )
+                
+                # Update counters in a thread-safe way
+                with self.counter_lock:
+                    self.pages_scraped += 1
+                    self.pages_processed += 1
+                    self.publish_progress()
+                
+                result["success"] = True
+                return result
+            else:
+                result["error"] = "No meaningful content extracted"
+                with self.counter_lock:
+                    self.pages_failed += 1
+                    self.pages_processed += 1
+                    self.publish_progress()
+                return result
+                
+        except Exception as e:
+            self.logger.error(f"Error processing {url}: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            
+            result["error"] = str(e)
+            with self.counter_lock:
+                self.pages_failed += 1
+                self.pages_processed += 1
+                self.publish_progress()
+            
+            return result
+    
     def scrape_clusters(
         self, 
         cluster_ids: List[str],
@@ -497,6 +601,7 @@ class ClusterScraper:
     ) -> Dict[str, Any]:
         """
         Scrape all URLs in the specified clusters with enhanced progress tracking.
+        Now uses parallel processing for improved performance.
         
         Args:
             cluster_ids: List of IDs of the clusters to scrape
@@ -506,6 +611,9 @@ class ClusterScraper:
         Returns:
             Dictionary with scraping results
         """
+        # Import threading module here to avoid any circular dependencies
+        import threading
+        
         # Set up task ID and callback
         if task_id:
             self.set_task_id(task_id)
@@ -583,7 +691,7 @@ class ClusterScraper:
             self.current_cluster_id = cluster_id
             self.publish_progress(force=True)
             
-            self.logger.info(f"Found {len(urls)} URLs in cluster {cluster_id}. Starting scraping...")
+            self.logger.info(f"Found {len(urls)} URLs in cluster {cluster_id}. Starting parallel scraping...")
             
             cluster_results = {
                 "cluster_id": cluster_id,
@@ -592,98 +700,52 @@ class ClusterScraper:
                 "errors": []
             }
             
-            # Process each URL in the cluster
-            for url in urls:
-                try:
-                    self.logger.info(f"Scraping: {url}")
-                    self.current_url = url
-                    
-                    # Fetch the page
-                    response = self.fetch_page(url)
-                    
-                    # If fetch failed completely
-                    if response is None:
-                        self.pages_failed += 1
-                        self.pages_processed += 1
-                        cluster_results["urls_failed"] += 1
-                        cluster_results["errors"].append({
-                            "url": url,
-                            "error": "Failed to fetch page"
-                        })
-                        self.publish_progress()
-                        continue
-                    
-                    # Only process pages with 200 status code
-                    if response.status_code != 200:
-                        self.logger.warning(f"Skipping URL {url} - Status code: {response.status_code}")
-                        self.pages_failed += 1
-                        self.pages_processed += 1
-                        cluster_results["urls_failed"] += 1
-                        cluster_results["errors"].append({
-                            "url": url,
-                            "error": f"Status code: {response.status_code}"
-                        })
-                        self.publish_progress()
-                        continue
-                    
-                    # Parse and convert to markdown
-                    html = response.text
-                    markdown_content, filename_base, document_title = self.parse_and_convert_to_markdown(html)
-                    
-                    if markdown_content:
-                        # Create directory structure based on URL path
-                        dir_path = self.url_to_directory_path(url)
-                        os.makedirs(dir_path, exist_ok=True)
-                        
-                        # Save the markdown content
-                        file_path = os.path.join(dir_path, f"{filename_base}.md")
-                        with open(file_path, "w", encoding="utf-8") as f:
-                            f.write(markdown_content)
-                        
-                        self.logger.info(f"Content saved to: {file_path}")
-                        
-                        # Create the metadata file
-                        self.create_metadata_file(
-                            self.metadata_dir,
-                            filename_base,
-                            document_title,
-                            url,
-                            markdown_content,
-                            expiry_date
-                        )
-                        
-                        # Update counters
-                        self.pages_scraped += 1
-                        cluster_results["urls_scraped"] += 1
-                    else:
-                        self.logger.warning("No meaningful content extracted.")
-                        self.pages_failed += 1
-                        cluster_results["urls_failed"] += 1
-                        cluster_results["errors"].append({
-                            "url": url,
-                            "error": "No meaningful content extracted"
-                        })
+            # Process URLs in parallel with ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all URL processing tasks
+                futures_to_url = {
+                    executor.submit(self.process_url, url, cluster_id, expiry_date): url
+                    for url in urls
+                }
                 
-                except Exception as e:
-                    self.logger.error(f"Error processing {url}: {str(e)}")
-                    self.logger.error(traceback.format_exc())
-                    
-                    self.pages_failed += 1
-                    cluster_results["urls_failed"] += 1
-                    cluster_results["errors"].append({
-                        "url": url,
-                        "error": str(e)
-                    })
-                
-                finally:
-                    # Update processed count and progress regardless of success/failure
-                    self.pages_processed += 1
-                    self.publish_progress()
+                # Process results as they complete
+                for future in as_completed(futures_to_url):
+                    url = futures_to_url[future]
+                    try:
+                        result = future.result()
+                        
+                        if result["success"]:
+                            cluster_results["urls_scraped"] += 1
+                        else:
+                            cluster_results["urls_failed"] += 1
+                            cluster_results["errors"].append({
+                                "url": url,
+                                "error": result["error"]
+                            })
+                            
+                    except Exception as e:
+                        self.logger.error(f"Unexpected error in thread for {url}: {str(e)}")
+                        self.logger.error(traceback.format_exc())
+                        
+                        # Update error tracking
+                        cluster_results["urls_failed"] += 1
+                        cluster_results["errors"].append({
+                            "url": url,
+                            "error": f"Thread execution error: {str(e)}"
+                        })
+                        
+                        # Update counters if not already done
+                        with self.counter_lock:
+                            # We don't know if process_url managed to update these counters
+                            # But it's better to potentially double-count than to miss updates
+                            self.pages_failed += 1
+                            self.pages_processed += 1
+                            self.publish_progress()
             
             # Add cluster results
             results["clusters_scraped"].append(cluster_results)
         
-        # Update final counts
+        # Update final counts from our thread-safe counters
         results["pages_scraped"] = self.pages_scraped
         results["pages_failed"] = self.pages_failed
         results["total_pages"] = self.total_pages
