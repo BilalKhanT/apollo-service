@@ -14,7 +14,7 @@ class CrawlSummary(BaseModel):
     total_direct_document_links: int = 0
     total_404_urls: int = 0
     total_error_urls: int = 0
-    crawl_date: str
+    crawl_date: str = Field(default_factory=lambda: datetime.now().isoformat())
     domain_restriction: bool = True
     max_depth: Optional[int] = None
     is_complete: bool = False
