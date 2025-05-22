@@ -5,13 +5,22 @@ from pymongo.server_api import ServerApi
 from beanie import init_beanie
 from typing import Optional
 
+# Load environment variables early
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.info("Environment variables loaded from .env file")
+except ImportError:
+    logging.warning("python-dotenv not installed, using system environment variables")
+
 logger = logging.getLogger(__name__)
 
 class Database:
     client: Optional[AsyncIOMotorClient] = None
     database = None
 
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+# MongoDB Atlas Configuration
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb+srv://bilalkhan:Nl8k9ZlwybiTi9nx@apollostagedb.iwunbq7.mongodb.net/?retryWrites=true&w=majority&appName=ApolloStageDB")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "apollo_crawler")
 MONGODB_MIN_POOL_SIZE = int(os.getenv("MONGODB_MIN_POOL_SIZE", "5"))
 MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "50"))
@@ -19,13 +28,16 @@ MONGODB_MAX_IDLE_TIME = int(os.getenv("MONGODB_MAX_IDLE_TIME", "30000"))
 MONGODB_CONNECT_TIMEOUT = int(os.getenv("MONGODB_CONNECT_TIMEOUT", "20000"))
 MONGODB_SERVER_SELECTION_TIMEOUT = int(os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT", "10000"))
 
-db = Database()
+# Debug: Log what URL we're using
+logger = logging.getLogger(__name__)
+logger.info(f"MongoDB URL loaded: {MONGODB_URL[:50]}... (showing first 50 chars)")
+logger.info(f"Database name: {DATABASE_NAME}")
 
-def is_atlas_connection(url: str) -> bool:
-    return 'mongodb+srv' in url or 'mongodb.net' in url
+db = Database()
 
 async def connect_to_mongo():
     try:
+        # Log the connection attempt (hide credentials)
         safe_url = MONGODB_URL
         if '@' in safe_url:
             parts = safe_url.split('@')
@@ -35,9 +47,15 @@ async def connect_to_mongo():
                     protocol = credentials_part.split('://')[0]
                     safe_url = f"{protocol}://***:***@{parts[1]}"
         
-        logger.info(f"Connecting to MongoDB at {safe_url}")
-        is_atlas = is_atlas_connection(MONGODB_URL)
+        logger.info(f"Connecting to MongoDB Atlas at {safe_url}")
+        
+        # Atlas-optimized connection parameters
         connection_params = {
+            "server_api": ServerApi('1'),
+            "retryWrites": True,
+            "w": "majority",
+            "tls": True,
+            "tlsAllowInvalidCertificates": False,
             "minPoolSize": MONGODB_MIN_POOL_SIZE,
             "maxPoolSize": MONGODB_MAX_POOL_SIZE,
             "maxIdleTimeMS": MONGODB_MAX_IDLE_TIME,
@@ -45,51 +63,37 @@ async def connect_to_mongo():
             "serverSelectionTimeoutMS": MONGODB_SERVER_SELECTION_TIMEOUT,
         }
 
-        if is_atlas:
-            connection_params.update({
-                "server_api": ServerApi('1'),
-                "retryWrites": True,
-                "w": "majority",
-                "tls": True,
-                "tlsAllowInvalidCertificates": False,
-            })
-            logger.info("Configured for MongoDB Atlas connection")
-        else:
-            connection_params["server_api"] = None
-            logger.info("Configured for local MongoDB connection")
+        logger.info("Configured for MongoDB Atlas connection")
 
         db.client = AsyncIOMotorClient(MONGODB_URL, **connection_params)
         db.database = db.client[DATABASE_NAME]
 
+        # Test the connection
         await db.client.admin.command('ping')
-        logger.info("Successfully connected to MongoDB")
+        logger.info("Successfully connected to MongoDB Atlas")
 
-        if is_atlas:
-            logger.info("Connected to MongoDB Atlas cloud database")
-        else:
-            logger.info("Connected to local MongoDB instance")
-
+        # Initialize Beanie ODM
         from app.models.database.database_models import CrawlResult, ClusterDocument, YearDocument
         await init_beanie(
             database=db.database,
             document_models=[CrawlResult, ClusterDocument, YearDocument]
         )
-        logger.info("Beanie initialized successfully")
+        logger.info("Beanie ODM initialized successfully")
         
     except Exception as e:
-        logger.error(f"Failed to connect to MongoDB: {str(e)}")
-        if is_atlas_connection(MONGODB_URL):
-            logger.error("Atlas connection troubleshooting:")
-            logger.error("1. Check your connection string includes username/password")
-            logger.error("2. Verify your IP address is whitelisted in Atlas")
-            logger.error("3. Ensure the database user has proper permissions")
-            logger.error("4. Check if the cluster is running and accessible")
+        logger.error(f"Failed to connect to MongoDB Atlas: {str(e)}")
+        logger.error("Atlas connection troubleshooting:")
+        logger.error("1. Check your connection string includes username/password")
+        logger.error("2. Verify your IP address is whitelisted in Atlas")
+        logger.error("3. Ensure the database user has proper permissions")
+        logger.error("4. Check if the cluster is running and accessible")
+        logger.error(f"Current MONGODB_URL value: {MONGODB_URL[:50]}...")
         raise
 
 async def close_mongo_connection():
     if db.client:
         db.client.close()
-        logger.info("MongoDB connection closed")
+        logger.info("MongoDB Atlas connection closed")
 
 def get_database():
     return db.database
