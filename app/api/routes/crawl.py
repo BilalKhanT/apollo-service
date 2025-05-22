@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, Query
 from typing import Dict, Any, List
 import json
 import logging
@@ -112,6 +112,28 @@ async def get_crawl_history(limit: int = 10) -> Dict[str, Any]:
             "crawls": history,
             "count": len(history)
         }
+    except HTTPException as e:
+        return Response(
+            status_code=e.status_code,
+            content=json.dumps({"detail": e.detail}),
+            media_type="application/json"
+        )
+
+@router.get("/results/all")
+async def get_all_crawl_results(
+    limit: int = Query(50, description="Maximum number of results to return", ge=1, le=100)
+) -> Dict[str, Any]:
+    """
+    Get all crawl results from database.
+    
+    Args:
+        limit: Maximum number of results to return (default: 50, max: 100)
+        
+    Returns:
+        List of all crawl results with their completion status and summaries
+    """
+    try:
+        return await CrawlController.get_all_crawl_results(limit)
     except HTTPException as e:
         return Response(
             status_code=e.status_code,

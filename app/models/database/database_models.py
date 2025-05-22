@@ -48,6 +48,32 @@ class DomainCluster(BaseModel):
     count: int
     clusters: List[Cluster]
 
+# New model to store raw crawl data
+class CrawlData(Document):
+    crawl_result_id: Annotated[str, Indexed()]
+    task_id: Annotated[str, Indexed()]
+    all_links: List[str] = Field(default_factory=list)
+    document_links: List[str] = Field(default_factory=list)
+    not_found_urls: List[str] = Field(default_factory=list)
+    error_urls: Dict[str, Dict] = Field(default_factory=dict)
+    created_at: Annotated[datetime, Indexed()] = Field(default_factory=datetime.utcnow)
+    
+    class Settings:
+        name = "crawl_data"
+
+# New model to store processed links
+class ProcessedLinks(Document):
+    crawl_result_id: Annotated[str, Indexed()]
+    task_id: Annotated[str, Indexed()]
+    file_links: List[str] = Field(default_factory=list)
+    social_media_links: List[str] = Field(default_factory=list)
+    bank_links: List[str] = Field(default_factory=list) 
+    misc_links: List[str] = Field(default_factory=list)
+    created_at: Annotated[datetime, Indexed()] = Field(default_factory=datetime.utcnow)
+    
+    class Settings:
+        name = "processed_links"
+
 class CrawlResult(Document):
     task_id: Annotated[str, Indexed(unique=True)]  
     crawl_id: Annotated[str, Indexed(unique=True)] 
@@ -57,6 +83,7 @@ class CrawlResult(Document):
     process_complete: bool = False
     cluster_complete: bool = False
     year_extraction_complete: bool = False
+    scraping_complete: bool = False  # New field to track scraping status
     crawl_summary: Optional[CrawlSummary] = None
     process_summary: Optional[ProcessSummary] = None
     cluster_summary: Optional[ClusterSummary] = None
@@ -71,7 +98,8 @@ class CrawlResult(Document):
                 ("crawl_complete", ASCENDING),
                 ("process_complete", ASCENDING),
                 ("cluster_complete", ASCENDING),
-                ("year_extraction_complete", ASCENDING)
+                ("year_extraction_complete", ASCENDING),
+                ("scraping_complete", ASCENDING)
             ])
         ]
 

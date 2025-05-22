@@ -167,7 +167,8 @@ class CrawlController:
                     "crawl_complete": crawl_result.crawl_complete,
                     "process_complete": crawl_result.process_complete,
                     "cluster_complete": crawl_result.cluster_complete,
-                    "year_extraction_complete": crawl_result.year_extraction_complete
+                    "year_extraction_complete": crawl_result.year_extraction_complete,
+                    "scraping_complete": crawl_result.scraping_complete
                 }
                 
                 # Add crawl summary if available
@@ -236,7 +237,8 @@ class CrawlController:
                     "crawl_complete": crawl_result.crawl_complete,
                     "process_complete": crawl_result.process_complete,
                     "cluster_complete": crawl_result.cluster_complete,
-                    "year_extraction_complete": crawl_result.year_extraction_complete
+                    "year_extraction_complete": crawl_result.year_extraction_complete,
+                    "scraping_complete": crawl_result.scraping_complete
                 }
             }
             
@@ -265,4 +267,30 @@ class CrawlController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error retrieving crawl details: {str(e)}"
+            )
+
+    @staticmethod
+    async def get_all_crawl_results(limit: int = 50) -> Dict[str, Any]:
+        """
+        Get all crawl results from database.
+        
+        Args:
+            limit: Maximum number of results to return
+            
+        Returns:
+            Dictionary containing list of crawl results and metadata
+        """
+        try:
+            results = await orchestrator.get_all_crawl_results(limit)
+            
+            return {
+                "crawl_results": results,
+                "count": len(results),
+                "limit": limit
+            }
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error retrieving all crawl results: {str(e)}"
             )
