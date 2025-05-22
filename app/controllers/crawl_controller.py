@@ -5,6 +5,9 @@ from app.utils.orchestrator import orchestrator
 from app.models.crawl_model import CrawlStatus
 from app.models.database.database_models import CrawlResult
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 class CrawlController:
     @staticmethod
@@ -50,96 +53,179 @@ class CrawlController:
     @staticmethod
     async def get_crawl_status(task_id: str) -> CrawlStatus:
         """
-        Get crawl status with database integration support.
+        Get crawl status with non-blocking retrieval and database integration support.
         """
-        task_status = task_manager.get_task_status(task_id)
-        
-        if not task_status:
-            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        
-        result = task_status.get("result") or {}
-        
-        if task_status["type"] != "crawl":
-            raise HTTPException(status_code=400, detail=f"Task {task_id} is not a crawl task")
-        
-        # Extract crawl results
-        crawl_results = result.get("crawl_results", {})
-        links_found = crawl_results.get("total_links_found", 0)
-        pages_scraped = crawl_results.get("total_pages_scraped", 0)
-        
-        # Check if clusters are ready based on database storage
-        clusters_ready = False
-        if task_status["status"] == "completed":
-            # For completed tasks, check if we have database results
-            clusters_ready = (
-                result.get("cluster_complete", False) and
-                result.get("year_extraction_complete", False) and
-                result.get("database_saved", False)
+        try:
+            # Non-blocking task status retrieval
+            task_status = task_manager.get_task_status(task_id)
+            
+            if not task_status:
+                # Task not in memory, check if it exists in database (server restart case)
+                logger.info(f"Task {task_id} not found in memory, checking database...")
+                
+                try:
+                    crawl_result = await CrawlResult.find_one(CrawlResult.task_id == task_id)
+                    if crawl_result:
+                        # Return status based on database state
+                        logger.info(f"Found task {task_id} in database, returning database-based status")
+                        
+                        # Determine status based on completion flags
+                        if crawl_result.crawl_complete and crawl_result.process_complete and crawl_result.cluster_complete and crawl_result.year_extraction_complete:
+                            db_status = "completed"
+                            progress = 100.0
+                        elif crawl_result.year_extraction_complete:
+                            db_status = "completed"
+                            progress = 95.0
+                        elif crawl_result.cluster_complete:
+                            db_status = "clustering"
+                            progress = 80.0
+                        elif crawl_result.process_complete:
+                            db_status = "processing"
+                            progress = 60.0
+                        elif crawl_result.crawl_complete:
+                            db_status = "crawling"
+                            progress = 40.0
+                        else:
+                            db_status = "unknown"
+                            progress = 0.0
+                        
+                        # Get basic info from crawl summary
+                        links_found = 0
+                        pages_scraped = 0
+                        clusters_ready = crawl_result.cluster_complete and crawl_result.year_extraction_complete
+                        
+                        if crawl_result.crawl_summary:
+                            links_found = crawl_result.crawl_summary.total_links_found
+                            pages_scraped = crawl_result.crawl_summary.total_pages_scraped
+                        
+                        return CrawlStatus(
+                            id=task_id,
+                            status=db_status,
+                            progress=progress,
+                            current_stage=f"Database: {db_status}",
+                            links_found=links_found,
+                            pages_scraped=pages_scraped,
+                            error=None,
+                            clusters_ready=clusters_ready
+                        )
+                    else:
+                        logger.warning(f"Task {task_id} not found in database either")
+                        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+                        
+                except Exception as e:
+                    logger.error(f"Error checking database for task {task_id}: {str(e)}")
+                    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            
+            result = task_status.get("result") or {}
+            
+            if task_status["type"] != "crawl":
+                raise HTTPException(status_code=400, detail=f"Task {task_id} is not a crawl task")
+            
+            # Extract crawl results
+            crawl_results = result.get("crawl_results", {})
+            links_found = crawl_results.get("total_links_found", 0)
+            pages_scraped = crawl_results.get("total_pages_scraped", 0)
+            
+            # Check if clusters are ready based on database storage
+            clusters_ready = False
+            if task_status["status"] == "completed":
+                # For completed tasks, check if we have database results
+                clusters_ready = (
+                    result.get("cluster_complete", False) and
+                    result.get("year_extraction_complete", False) and
+                    result.get("database_saved", False)
+                )
+            
+            # Determine current stage based on status
+            current_stage = task_status["status"]
+            
+            # Map internal status to user-friendly stage names
+            stage_mapping = {
+                "created": "Initializing",
+                "running": "Crawling",
+                "crawling": "Crawling websites",
+                "processing": "Processing links",
+                "clustering": "Clustering URLs",
+                "year_extraction": "Extracting years",
+                "saving_to_database": "Saving to database",
+                "completed": "Completed",
+                "failed": "Failed",
+                "stopped": "Stopped"
+            }
+            
+            current_stage = stage_mapping.get(current_stage, current_stage)
+            
+            return CrawlStatus(
+                id=task_id,
+                status=task_status["status"],
+                progress=task_status["progress"],
+                current_stage=current_stage,
+                links_found=links_found,
+                pages_scraped=pages_scraped,
+                error=task_status.get("error"),
+                clusters_ready=clusters_ready
             )
-        
-        # Determine current stage based on status
-        current_stage = task_status["status"]
-        
-        # Map internal status to user-friendly stage names
-        stage_mapping = {
-            "created": "Initializing",
-            "running": "Crawling",
-            "crawling": "Crawling websites",
-            "processing": "Processing links",
-            "clustering": "Clustering URLs",
-            "year_extraction": "Extracting years",
-            "saving_to_database": "Saving to database",
-            "completed": "Completed",
-            "failed": "Failed",
-            "stopped": "Stopped"
-        }
-        
-        current_stage = stage_mapping.get(current_stage, current_stage)
-        
-        return CrawlStatus(
-            id=task_id,
-            status=task_status["status"],
-            progress=task_status["progress"],
-            current_stage=current_stage,
-            links_found=links_found,
-            pages_scraped=pages_scraped,
-            error=task_status.get("error"),
-            clusters_ready=clusters_ready
-        )
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting crawl status for task {task_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Internal error getting crawl status: {str(e)}"
+            )
     
     @staticmethod
     async def stop_crawl_task(task_id: str) -> Dict[str, Any]:
         """
         Stop a crawl task with proper cleanup.
         """
-        task_status = task_manager.get_task_status(task_id)
-        
-        if not task_status:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found"
-            )
-        
-        if task_status.get("type") != "crawl":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Task {task_id} is not a crawl task"
-            )
-        
-        # Use orchestrator to stop the crawl (this handles both file and database cleanup)
-        stop_result = orchestrator.stop_crawl(task_id)
-        
-        if stop_result.get("success"):
-            return {
-                "id": task_id,
-                "status": "stopped",
-                "message": stop_result.get("message"),
-                "cleanup_completed": stop_result.get("cleanup_completed", False)
-            }
-        else:
+        try:
+            task_status = task_manager.get_task_status(task_id)
+            
+            if not task_status:
+                # Check database for the task
+                crawl_result = await CrawlResult.find_one(CrawlResult.task_id == task_id)
+                if crawl_result:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Task {task_id} is not currently running (found in database but not in memory)"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Task {task_id} not found"
+                    )
+            
+            if task_status.get("type") != "crawl":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Task {task_id} is not a crawl task"
+                )
+            
+            # Use orchestrator to stop the crawl (this handles both file and database cleanup)
+            stop_result = orchestrator.stop_crawl(task_id)
+            
+            if stop_result.get("success"):
+                return {
+                    "id": task_id,
+                    "status": "stopped",
+                    "message": stop_result.get("message"),
+                    "cleanup_completed": stop_result.get("cleanup_completed", False)
+                }
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=stop_result.get("message", "Failed to stop task")
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error stopping crawl task {task_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=stop_result.get("message", "Failed to stop task")
+                detail=f"Internal error stopping task: {str(e)}"
             )
 
     @staticmethod
@@ -201,6 +287,7 @@ class CrawlController:
             return history
             
         except Exception as e:
+            logger.error(f"Error retrieving crawl history: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error retrieving crawl history: {str(e)}"
@@ -264,6 +351,7 @@ class CrawlController:
         except HTTPException:
             raise
         except Exception as e:
+            logger.error(f"Error retrieving crawl details for {crawl_result_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error retrieving crawl details: {str(e)}"
@@ -290,6 +378,7 @@ class CrawlController:
             }
             
         except Exception as e:
+            logger.error(f"Error retrieving all crawl results: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error retrieving all crawl results: {str(e)}"

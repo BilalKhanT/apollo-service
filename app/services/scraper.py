@@ -525,7 +525,7 @@ class ClusterScraper:
             if response is None:
                 result["error"] = "Failed to fetch page"
                 with self.counter_lock:
-                    self.pages_failed += a
+                    self.pages_failed += 1
                     self.pages_processed += 1
                     self.publish_progress()
                 return result
