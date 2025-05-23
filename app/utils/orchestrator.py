@@ -4,7 +4,7 @@ import logging
 import time
 import traceback
 from typing import Dict, Any, List, Optional
-from bson import ObjectId
+import json
 
 from app.utils.task_manager import task_manager
 from app.utils.config import (
@@ -18,21 +18,13 @@ from app.utils.config import (
     FILE_DOWNLOAD_DIR, MAX_DOWNLOAD_WORKERS, DATA_DIR
 )
 
-# Import from services
+# Import from services instead of crawler
 from app.services.apollo import Apollo
 from app.services.link_processor import LinkProcessor
 from app.services.url_clusterer import URLClusterer
 from app.services.year_extractor import YearExtractor
 from app.services.scraper import ClusterScraper
 from app.services.downloader import FileDownloader
-
-# Import database models
-from app.models.database.database_models import (
-    CrawlResult, ClusterDocument, YearDocument, CrawlData, ProcessedLinks,
-    CrawlSummary, ProcessSummary, ClusterSummary, YearExtractionSummary,
-    DomainCluster, Cluster
-)
-from app.utils.database import get_database
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -43,13 +35,13 @@ logging.basicConfig(
 
 class ApolloOrchestrator:
     """
-    A class to orchestrate the entire Apollo workflow with full database integration:
-    1. Crawling -> Database
-    2. Link processing -> Database
-    3. URL clustering -> Database
-    4. Year extraction -> Database
-    5. Content scraping (file-based for now)
-    6. File downloading (file-based for now)
+    A class to orchestrate the entire Apollo workflow:
+    1. Crawling
+    2. Link processing
+    3. URL clustering
+    4. Year extraction
+    5. Content scraping
+    6. File downloading
     """
     
     def __init__(self, base_directory: str = None):
@@ -57,18 +49,22 @@ class ApolloOrchestrator:
         Initialize the orchestrator.
         
         Args:
-            base_directory: Base directory for storing scraping outputs (still needed for scraping/downloading)
+            base_directory: Base directory for storing all data and output
         """
         self.base_directory = base_directory or DATA_DIR
         self.logger = logger
         
-        # Create directory structure (only needed for scraping/downloading now)
+        # Create directory structure
         os.makedirs(self.base_directory, exist_ok=True)
+        self.crawl_dir = os.path.join(self.base_directory, "crawl")
+        self.process_dir = os.path.join(self.base_directory, "process")
+        self.clusters_dir = os.path.join(self.base_directory, "clusters")
         self.scrape_dir = os.path.join(self.base_directory, "scraped")
         self.download_dir = os.path.join(self.base_directory, "downloads")
         self.metadata_dir = os.path.join(self.base_directory, "metadata")
         
-        for directory in [self.scrape_dir, self.download_dir, self.metadata_dir]:
+        for directory in [self.crawl_dir, self.process_dir, self.clusters_dir, 
+                          self.scrape_dir, self.download_dir, self.metadata_dir]:
             os.makedirs(directory, exist_ok=True)
 
     def publish_log(self, task_id: str, message: str, level: str = "info"):
@@ -93,183 +89,8 @@ class ApolloOrchestrator:
             self.logger.warning(message)
         elif level == "error":
             self.logger.error(message)
-
-    async def save_crawl_data_to_database(
-        self,
-        task_id: str,
-        crawl_result_id: str,
-        crawl_results: Dict[str, Any]
-    ) -> None:
-        """
-        Save raw crawl data to database.
-        """
-        try:
-            # Delete existing crawl data for this crawl result
-            await CrawlData.find(CrawlData.crawl_result_id == crawl_result_id).delete()
-            
-            # Create new crawl data document
-            crawl_data = CrawlData(
-                crawl_result_id=crawl_result_id,
-                task_id=task_id,
-                all_links=crawl_results.get('all_links', []),
-                document_links=crawl_results.get('direct_document_links', []),
-                not_found_urls=crawl_results.get('404_urls', []),
-                error_urls=crawl_results.get('error_urls', {})
-            )
-            
-            await crawl_data.save()
-            self.publish_log(task_id, f"Raw crawl data saved to database", "info")
-            
-        except Exception as e:
-            self.publish_log(task_id, f"Error saving crawl data to database: {str(e)}", "error")
-            raise
-
-    async def save_crawl_to_database(
-        self,
-        task_id: str,
-        crawl_id: str,
-        crawl_summary: Dict[str, Any],
-        process_summary: Dict[str, Any] = None,
-        cluster_summary: Dict[str, Any] = None,
-        year_extraction_summary: Dict[str, Any] = None,
-        clusters_data: Dict[str, Any] = None,
-        year_data: Dict[str, Any] = None
-    ) -> str:
-        """
-        Save crawl results to database.
-        
-        Returns:
-            The database document ID
-        """
-        try:
-            # Create or update crawl result document
-            crawl_result = await CrawlResult.find_one(CrawlResult.task_id == task_id)
-            
-            # Ensure crawl_summary has all required fields
-            if crawl_summary and 'crawl_date' not in crawl_summary:
-                crawl_summary['crawl_date'] = datetime.now().isoformat()
-            
-            if not crawl_result:
-                crawl_result = CrawlResult(
-                    task_id=task_id,
-                    crawl_id=crawl_id,
-                    crawl_summary=CrawlSummary(**crawl_summary) if crawl_summary else None
-                )
-            else:
-                crawl_result.updated_at = datetime.utcnow()
-                if crawl_summary:
-                    crawl_result.crawl_summary = CrawlSummary(**crawl_summary)
-            
-            # Update completion flags and summaries
-            if process_summary:
-                crawl_result.process_complete = True
-                crawl_result.process_summary = ProcessSummary(**process_summary)
-            
-            if cluster_summary:
-                crawl_result.cluster_complete = True
-                crawl_result.cluster_summary = ClusterSummary(**cluster_summary)
-            
-            if year_extraction_summary:
-                crawl_result.year_extraction_complete = True
-                crawl_result.year_extraction_summary = YearExtractionSummary(**year_extraction_summary)
-            
-            # Save the main crawl result
-            await crawl_result.save()
-            crawl_result_id = str(crawl_result.id)
-            
-            # Save clusters data if provided
-            if clusters_data and cluster_summary:
-                await self.save_clusters_to_database(crawl_result_id, task_id, clusters_data)
-            
-            # Save year data if provided
-            if year_data and year_extraction_summary:
-                await self.save_years_to_database(crawl_result_id, task_id, year_data)
-            
-            self.publish_log(task_id, f"Crawl results saved to database with ID: {crawl_result_id}", "info")
-            return crawl_result_id
-            
-        except Exception as e:
-            self.publish_log(task_id, f"Error saving crawl results to database: {str(e)}", "error")
-            raise
-
-    async def save_clusters_to_database(
-        self,
-        crawl_result_id: str,
-        task_id: str,
-        clusters_data: Dict[str, Any]
-    ):
-        """Save clusters data to database."""
-        try:
-            # Delete existing clusters for this crawl result
-            await ClusterDocument.find(ClusterDocument.crawl_result_id == crawl_result_id).delete()
-            
-            # Save new clusters
-            cluster_documents = []
-            for domain, domain_data in clusters_data.get("clusters", {}).items():
-                # Convert cluster data to the expected format
-                clusters_list = []
-                for cluster in domain_data.get("clusters", []):
-                    clusters_list.append(Cluster(
-                        id=cluster.get("id"),
-                        path=cluster.get("path"),
-                        url_count=cluster.get("url_count"),
-                        urls=cluster.get("urls", [])
-                    ))
-                
-                domain_cluster = DomainCluster(
-                    id=domain_data.get("id"),
-                    count=domain_data.get("count"),
-                    clusters=clusters_list
-                )
-                
-                cluster_doc = ClusterDocument(
-                    crawl_result_id=crawl_result_id,
-                    task_id=task_id,
-                    domain=domain,
-                    cluster_data=domain_cluster
-                )
-                cluster_documents.append(cluster_doc)
-            
-            if cluster_documents:
-                await ClusterDocument.insert_many(cluster_documents)
-                self.publish_log(task_id, f"Saved {len(cluster_documents)} domain clusters to database", "info")
-        
-        except Exception as e:
-            self.publish_log(task_id, f"Error saving clusters to database: {str(e)}", "error")
-            raise
-
-    async def save_years_to_database(
-        self,
-        crawl_result_id: str,
-        task_id: str,
-        year_data: Dict[str, List[str]]
-    ):
-        """Save year data to database."""
-        try:
-            # Delete existing year data for this crawl result
-            await YearDocument.find(YearDocument.crawl_result_id == crawl_result_id).delete()
-            
-            # Save new year data
-            year_documents = []
-            for year, files in year_data.items():
-                year_doc = YearDocument(
-                    crawl_result_id=crawl_result_id,
-                    task_id=task_id,
-                    year=year,
-                    files=files,
-                    files_count=len(files)
-                )
-                year_documents.append(year_doc)
-            
-            if year_documents:
-                await YearDocument.insert_many(year_documents)
-                self.publish_log(task_id, f"Saved {len(year_documents)} year clusters to database", "info")
-        
-        except Exception as e:
-            self.publish_log(task_id, f"Error saving years to database: {str(e)}", "error")
-            raise
     
-    async def run_crawl(
+    def run_crawl(
         self,
         task_id: str,
         base_url: str,
@@ -281,7 +102,7 @@ class ApolloOrchestrator:
         stop_scraper: bool = False
     ) -> Dict[str, Any]:
         """
-        Run the complete crawling workflow (crawl, process, cluster) with full database integration.
+        Run the complete crawling workflow (crawl, process, cluster).
         
         Args:
             task_id: Task ID for tracking progress
@@ -314,14 +135,18 @@ class ApolloOrchestrator:
         # Log start of crawling workflow
         self.publish_log(task_id, f"Starting crawl workflow for {base_url}", "info")
         
-        # If stop_scraper is True, handle stopping logic
+        # If stop_scraper is True, check if there's a running crawler and stop it
         if stop_scraper:
             self.publish_log(task_id, "Stop signal received. Checking for running crawlers...", "info")
             running_tasks = task_manager.list_tasks(task_type="crawl", status="running")
             for task in running_tasks:
+                # Skip the current task
                 if task['id'] == task_id:
                     continue
+                
+                # Try to stop the crawler
                 self.publish_log(task_id, f"Stopping crawler task {task['id']}...", "info")
+                # TODO: Implement a mechanism to stop running crawlers
             
             return {"status": "stopped", "message": "Stop signal sent to all running crawlers"}
         
@@ -333,44 +158,64 @@ class ApolloOrchestrator:
                 progress=5.0
             )
             
-            # Generate unique identifiers
+            # Generate unique filenames for this crawl
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             crawl_id = f"{timestamp}_{base_url.replace('://', '_').replace('/', '_')[:30]}"
+            
+            # Define file paths
+            all_links_file = os.path.join(self.crawl_dir, f"{crawl_id}_all_links.json")
+            categorized_file = os.path.join(self.process_dir, f"{crawl_id}_categorized.json")
+            url_clusters_file = os.path.join(self.clusters_dir, f"{crawl_id}_url_clusters.json")
+            year_clusters_file = os.path.join(self.clusters_dir, f"{crawl_id}_year_clusters.json")
             
             # Log the limits being used
             self.publish_log(task_id, f"Starting crawler for {base_url} with limits: max_links={max_links_to_scrape}, max_pages={max_pages_to_scrape}, depth_limit={depth_limit}", "info")
             
             # Define a callback for Apollo status updates
             def status_callback(status_data):
+                # Get the current time elapsed since the crawler started
                 execution_time_seconds = status_data.get('execution_time_seconds', 0)
                 crawler_progress = status_data.get('progress', 0)
                 
+                # Initialize progress tracking if not already done
                 if not hasattr(self, '_last_progress'):
-                    self._last_progress = 5.0
+                    self._last_progress = 5.0  # Start at 5%
                     self._last_update_time = time.time()
                 
+                # SIMPLE APPROACH:
+                # Check if we're dealing with unlimited crawling (any parameter is infinity)
                 if (max_links_to_scrape == float("inf") or 
                     max_pages_to_scrape == float("inf") or 
                     depth_limit == float("inf")):
                     
+                    # Calculate time since last progress update
                     current_time = time.time()
                     time_since_update = current_time - self._last_update_time
                     
-                    if time_since_update >= 2.0:
-                        increase_amount = (time_since_update / 5.0)
+                    # Increase progress by 1% every 2 seconds, but never exceed 95%
+                    if time_since_update >= 2.0:  # Every 2 secondss
+                        increase_amount = (time_since_update / 5.0)  # 1% per 5 seconds
                         new_progress = min(95.0, self._last_progress + increase_amount)
+                        
+                        # Update the last progress update time
                         self._last_update_time = current_time
                         progress = new_progress
                     else:
+                        # No change in progress if less than 2 seconds have passed
                         progress = self._last_progress
                 else:
+                    # For bounded crawls, calculate progress normally (0-40% range)
                     if crawler_progress >= 99.0:
+                        # Full completion of crawl phase
                         progress = 40.0
                     else:
+                        # Normal scaling from crawler progress (0-100) to overall progress (0-40)
                         progress = (crawler_progress / 100) * 40.0
                 
+                # Update last progress value
                 self._last_progress = progress
                 
+                # Prepare the crawl result
                 crawl_result = {
                     "crawl_results": {
                         "total_links_found": status_data.get('links_found', 0),
@@ -379,13 +224,15 @@ class ApolloOrchestrator:
                     }
                 }
                 
+                # Update task status with progress and result
                 task_manager.update_task_status(
                     task_id,
                     progress=progress,
                     result=crawl_result
                 )
                 
-                if status_data.get('pages_scraped', 0) % 2 == 0:
+                # Log progress updates periodically
+                if status_data.get('pages_scraped', 0) % 2 == 0:  # Every 2 pages
                     self.publish_log(
                         task_id,
                         f"Crawl progress: {status_data.get('pages_scraped', 0)} pages scraped, "
@@ -393,10 +240,10 @@ class ApolloOrchestrator:
                         "info"
                     )
             
-            # Create the crawler (no output file needed)
+            # Create the crawler
             crawler = Apollo(
                 base_url=base_url,
-                output_file="/tmp/temp_crawl.json",  # Temporary, will be ignored
+                output_file=all_links_file,
                 max_links_to_scrape=max_links_to_scrape,
                 max_pages_to_scrape=max_pages_to_scrape,
                 depth_limit=depth_limit,
@@ -422,10 +269,6 @@ class ApolloOrchestrator:
             self.publish_log(task_id, f"Starting crawler for {base_url}", "info")
             crawl_result = crawler.start()
             
-            # Clean up temp file
-            if os.path.exists("/tmp/temp_crawl.json"):
-                os.remove("/tmp/temp_crawl.json")
-            
             # Log completion of crawling
             self.publish_log(
                 task_id,
@@ -433,35 +276,25 @@ class ApolloOrchestrator:
                 "info"
             )
             
-            # Create crawl result in database first to get ID
-            crawl_result_id = await self.save_crawl_to_database(
-                task_id=task_id,
-                crawl_id=crawl_id,
-                crawl_summary=crawl_result["summary"]
-            )
-            
-            # Save raw crawl data to database
-            await self.save_crawl_data_to_database(task_id, crawl_result_id, crawl_result)
-            
             # Update progress
             task_manager.update_task_status(
                 task_id,
                 progress=40.0,
-                result={"crawl_complete": True, "crawl_results": crawl_result["summary"], "crawl_result_id": crawl_result_id}
+                result={"crawl_complete": True, "crawl_results": crawl_result["summary"]}
             )
             
-            # Step 2: Link processing (Database-based)
+            # Step 2: Link processing
             task_manager.update_task_status(
                 task_id,
                 status="processing",
                 progress=45.0
             )
             
-            # Create the link processor (database-based)
-            self.publish_log(task_id, "Processing links from database...", "info")
+            # Create the link processor
+            self.publish_log(task_id, "Processing links...", "info")
             processor = LinkProcessor(
-                crawl_result_id=crawl_result_id,
-                task_id=task_id,
+                input_file=all_links_file,
+                output_file=categorized_file,
                 num_workers=CRAWLER_NUM_WORKERS,
                 file_extensions=FILE_EXTENSIONS,
                 social_media_keywords=SOCIAL_MEDIA_KEYWORDS,
@@ -469,21 +302,13 @@ class ApolloOrchestrator:
             )
             
             # Process links
-            process_result = await processor.process()
+            process_result = processor.process()
             
             # Log link processing results
             self.publish_log(
                 task_id,
                 f"Link processing completed. Categorized {process_result['summary']['total_links']} links into {process_result['summary']['file_links_count']} file links, {process_result['summary']['bank_links_count']} bank links, {process_result['summary']['social_media_links_count']} social media links, and {process_result['summary']['misc_links_count']} miscellaneous links.",
                 "info"
-            )
-            
-            # Update crawl result with process summary
-            await self.save_crawl_to_database(
-                task_id=task_id,
-                crawl_id=crawl_id,
-                crawl_summary=crawl_result["summary"],
-                process_summary=process_result["summary"]
             )
             
             # Update progress
@@ -497,25 +322,25 @@ class ApolloOrchestrator:
                 }
             )
             
-            # Step 3: URL clustering (Database-based)
+            # Step 3: URL clustering
             task_manager.update_task_status(
                 task_id,
                 status="clustering",
                 progress=65.0
             )
             
-            # Create the URL clusterer (database-based)
-            self.publish_log(task_id, "Clustering URLs from database...", "info")
+            # Create the URL clusterer
+            self.publish_log(task_id, "Clustering URLs...", "info")
             clusterer = URLClusterer(
-                crawl_result_id=crawl_result_id,
-                task_id=task_id,
+                input_file=categorized_file,
+                output_file=url_clusters_file,
                 min_cluster_size=CLUSTER_MIN_SIZE,
                 path_depth=CLUSTER_PATH_DEPTH,
                 similarity_threshold=CLUSTER_SIMILARITY_THRESHOLD
             )
             
             # Cluster URLs
-            cluster_result = await clusterer.cluster()
+            cluster_result = clusterer.cluster()
 
             if hasattr(self, f"crawler_{task_id}"):
                 delattr(self, f"crawler_{task_id}")
@@ -538,22 +363,22 @@ class ApolloOrchestrator:
                 }
             )
             
-            # Step 4: Year extraction (Database-based)
+            # Step 4: Year extraction
             task_manager.update_task_status(
                 task_id,
                 status="year_extraction",
                 progress=85.0
             )
             
-            # Create the year extractor (database-based)
-            self.publish_log(task_id, "Extracting years from database...", "info")
+            # Create the year extractor
+            self.publish_log(task_id, "Extracting years from file URLs...", "info")
             year_extractor = YearExtractor(
-                crawl_result_id=crawl_result_id,
-                task_id=task_id
+                input_file=categorized_file,
+                output_file=year_clusters_file
             )
             
             # Extract years
-            year_result = await year_extractor.process()
+            year_result = year_extractor.process()
             
             # Log year extraction results
             self.publish_log(
@@ -562,60 +387,34 @@ class ApolloOrchestrator:
                 "info"
             )
             
-            # Step 5: Save Final Results to Database
-            task_manager.update_task_status(
-                task_id,
-                status="saving_to_database",
-                progress=90.0
-            )
-            
-            self.publish_log(task_id, "Saving final results to database...", "info")
-            
-            # Save all results to database
-            final_crawl_result_id = await self.save_crawl_to_database(
-                task_id=task_id,
-                crawl_id=crawl_id,
-                crawl_summary=crawl_result["summary"],
-                process_summary=process_result["summary"],
-                cluster_summary=cluster_result["summary"],
-                year_extraction_summary={
-                    "total_years": len(year_result),
-                    "total_files": sum(len(files) for files in year_result.values())
-                },
-                clusters_data=cluster_result,
-                year_data=year_result
-            )
-            
-            # Update final progress
+            # Update progress
             task_manager.update_task_status(
                 task_id,
                 status="completed",
                 progress=100.0,
                 result={
-                    "crawl_complete": True,
-                    "process_complete": True,
-                    "cluster_complete": True,
+                    **task_manager.get_task_status(task_id)["result"],
                     "year_extraction_complete": True,
-                    "database_saved": True,
-                    "crawl_result_id": final_crawl_result_id,
-                    "crawl_results": crawl_result["summary"],
-                    "process_results": process_result["summary"],
-                    "cluster_results": cluster_result["summary"],
                     "year_extraction_results": {
                         "total_years": len(year_result),
                         "total_files": sum(len(files) for files in year_result.values())
+                    },
+                    "output_files": {
+                        "all_links_file": all_links_file,
+                        "categorized_file": categorized_file,
+                        "url_clusters_file": url_clusters_file,
+                        "year_clusters_file": year_clusters_file
                     }
                 }
             )
             
-            self.publish_log(task_id, f"Crawl workflow completed successfully for {base_url}. Results saved to database.", "info")
+            self.publish_log(task_id, f"Crawl workflow completed successfully for {base_url}", "info")
             
             # Return final status
             return task_manager.get_task_status(task_id)
         
         except Exception as e:
             self.publish_log(task_id, f"Error in crawl workflow: {str(e)}", "error")
-            self.publish_log(task_id, traceback.format_exc(), "error")
             task_manager.update_task_status(
                 task_id,
                 status="failed",
@@ -626,9 +425,16 @@ class ApolloOrchestrator:
     def stop_crawl(self, task_id: str) -> Dict[str, Any]:
         """
         Stop a running crawl process gracefully with proper cleanup.
+    
+        Args:
+            task_id: ID of the task to stop
+        
+        Returns:
+            Dictionary with stop result
         """
         self.publish_log(task_id, f"Attempting to stop crawl task {task_id} gracefully...", "info")
     
+        # Get the task status
         task_status = task_manager.get_task_status(task_id)
         
         if not task_status:
@@ -636,28 +442,37 @@ class ApolloOrchestrator:
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
         
+        # Check if task is a crawl task
         if task_status.get("type") != "crawl":
             error_msg = f"Task {task_id} is not a crawl task"
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
         
+        # Check if task is already completed or failed
         current_status = task_status.get("status")
         if current_status in ["completed", "failed", "stopped"]:
             msg = f"Task {task_id} is already in '{current_status}' state"
             self.publish_log(task_id, msg, "info")
             return {"success": True, "message": msg}
         
+        # Task is running, try to stop it
         try:
+            # Get the crawler instance from context if available
             crawler_instance = getattr(self, f"crawler_{task_id}", None)
             
             if crawler_instance:
+                # Stop the crawler directly
                 self.publish_log(task_id, "Stopping crawler...", "info")
                 stop_result = crawler_instance.stop()
                 
                 if stop_result:
+                    # Clean up the crawler
                     cleanup_result = crawler_instance.cleanup()
+                    
+                    # Remove reference to the crawler
                     delattr(self, f"crawler_{task_id}")
                     
+                    # Update task status
                     task_manager.update_task_status(
                         task_id,
                         status="stopped",
@@ -679,8 +494,10 @@ class ApolloOrchestrator:
                     self.publish_log(task_id, "Failed to stop crawler", "error")
                     return {"success": False, "message": "Failed to stop crawler"}
             else:
+                # No direct crawler instance, just update the task status
                 self.publish_log(task_id, "No active crawler instance found, updating task status to stopped", "info")
                 
+                # Update task status to stopped
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
@@ -702,6 +519,7 @@ class ApolloOrchestrator:
             error_msg = f"Error stopping crawler: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
             
+            # Try to update task status anyway
             task_manager.update_task_status(
                 task_id,
                 status="failed",
@@ -710,219 +528,7 @@ class ApolloOrchestrator:
             
             return {"success": False, "message": error_msg}
 
-    # Database-based methods for retrieving clusters and years
-    async def get_available_clusters(self, crawl_result_id: str = None) -> List[Dict[str, Any]]:
-        """
-        Get available clusters from database.
-        
-        Args:
-            crawl_result_id: Specific crawl result ID, if None gets from latest crawl
-            
-        Returns:
-            List of dictionaries with cluster information
-        """
-        try:
-            if crawl_result_id:
-                # Get clusters for specific crawl result
-                cluster_docs = await ClusterDocument.find(
-                    ClusterDocument.crawl_result_id == crawl_result_id
-                ).to_list()
-            else:
-                # Get clusters from most recent completed crawl
-                latest_crawl = await CrawlResult.find(
-                    CrawlResult.cluster_complete == True
-                ).sort([("created_at", -1)]).first()
-                
-                if not latest_crawl:
-                    return []
-                
-                cluster_docs = await ClusterDocument.find(
-                    ClusterDocument.crawl_result_id == str(latest_crawl.id)
-                ).to_list()
-            
-            clusters_info = []
-            
-            for cluster_doc in cluster_docs:
-                domain_data = cluster_doc.cluster_data
-                
-                # Add domain level cluster
-                clusters_info.append({
-                    "id": domain_data.id,
-                    "name": cluster_doc.domain,
-                    "type": "domain",
-                    "url_count": domain_data.count
-                })
-                
-                # Add sub-clusters
-                for sub_cluster in domain_data.clusters:
-                    clusters_info.append({
-                        "id": sub_cluster.id,
-                        "name": f"{cluster_doc.domain} - {sub_cluster.path}",
-                        "type": "path",
-                        "url_count": sub_cluster.url_count
-                    })
-            
-            return clusters_info
-        
-        except Exception as e:
-            logger.error(f"Error getting available clusters from database: {str(e)}")
-            return []
-    
-    async def get_available_years(self, crawl_result_id: str = None) -> List[Dict[str, Any]]:
-        """
-        Get available years from database.
-        
-        Args:
-            crawl_result_id: Specific crawl result ID, if None gets from latest crawl
-            
-        Returns:
-            List of dictionaries with year information
-        """
-        try:
-            if crawl_result_id:
-                # Get years for specific crawl result
-                year_docs = await YearDocument.find(
-                    YearDocument.crawl_result_id == crawl_result_id
-                ).to_list()
-            else:
-                # Get years from most recent completed crawl
-                latest_crawl = await CrawlResult.find(
-                    CrawlResult.year_extraction_complete == True
-                ).sort([("created_at", -1)]).first()
-                
-                if not latest_crawl:
-                    return []
-                
-                year_docs = await YearDocument.find(
-                    YearDocument.crawl_result_id == str(latest_crawl.id)
-                ).to_list()
-            
-            years_info = []
-            
-            for year_doc in year_docs:
-                years_info.append({
-                    "year": year_doc.year,
-                    "files_count": year_doc.files_count
-                })
-            
-            # Sort by year (newest first, but "No Year" at the end)
-            return sorted(
-                years_info,
-                key=lambda y: (y["year"] == "No Year", y["year"]),
-                reverse=True
-            )
-        
-        except Exception as e:
-            logger.error(f"Error getting available years from database: {str(e)}")
-            return []
-        
-    async def get_cluster_by_id(self, cluster_id: str, crawl_result_id: str = None) -> Optional[Dict[str, Any]]:
-        """Get cluster by ID from database."""
-        try:
-            if crawl_result_id:
-                cluster_docs = await ClusterDocument.find(
-                    ClusterDocument.crawl_result_id == crawl_result_id
-                ).to_list()
-            else:
-                # Get from latest crawl
-                latest_crawl = await CrawlResult.find(
-                    CrawlResult.cluster_complete == True
-                ).sort([("created_at", -1)]).first()
-                
-                if not latest_crawl:
-                    return None
-                
-                cluster_docs = await ClusterDocument.find(
-                    ClusterDocument.crawl_result_id == str(latest_crawl.id)
-                ).to_list()
-            
-            for cluster_doc in cluster_docs:
-                domain_data = cluster_doc.cluster_data
-                
-                # Check if it's a domain-level cluster
-                if domain_data.id == cluster_id:
-                    return {
-                        "id": domain_data.id,
-                        "name": cluster_doc.domain,
-                        "type": "domain",
-                        "url_count": domain_data.count,
-                        "clusters": [
-                            {
-                                "id": cluster.id,
-                                "path": cluster.path,
-                                "url_count": cluster.url_count,
-                                "urls": cluster.urls
-                            }
-                            for cluster in domain_data.clusters
-                        ]
-                    }
-                
-                # Check sub-clusters
-                for cluster in domain_data.clusters:
-                    if cluster.id == cluster_id:
-                        return {
-                            "id": cluster.id,
-                            "name": f"{cluster_doc.domain} - {cluster.path}",
-                            "type": "path",
-                            "url_count": cluster.url_count,
-                            "urls": cluster.urls
-                        }
-            
-            return None
-        
-        except Exception as e:
-            logger.error(f"Error getting cluster by ID from database: {str(e)}")
-            return None
-        
-    async def get_year_by_id(self, year: str, crawl_result_id: str = None) -> Optional[Dict[str, Any]]:
-        """Get year data by ID from database."""
-        try:
-            if crawl_result_id:
-                year_doc = await YearDocument.find_one(
-                    YearDocument.crawl_result_id == crawl_result_id,
-                    YearDocument.year == year
-                )
-            else:
-                # Get from latest crawl
-                latest_crawl = await CrawlResult.find(
-                    CrawlResult.year_extraction_complete == True
-                ).sort([("created_at", -1)]).first()
-                
-                if not latest_crawl:
-                    return None
-                
-                year_doc = await YearDocument.find_one(
-                    YearDocument.crawl_result_id == str(latest_crawl.id),
-                    YearDocument.year == year
-                )
-            
-            if year_doc:
-                return {
-                    "year": year_doc.year,
-                    "files_count": year_doc.files_count,
-                    "files": year_doc.files
-                }
-            
-            return None
-        
-        except Exception as e:
-            logger.error(f"Error getting year by ID from database: {str(e)}")
-            return None
-
-    async def mark_scraping_complete(self, crawl_result_id: str) -> None:
-        """Mark scraping as complete for a crawl result."""
-        try:
-            crawl_result = await CrawlResult.get(crawl_result_id)
-            if crawl_result:
-                crawl_result.scraping_complete = True
-                crawl_result.updated_at = datetime.utcnow()
-                await crawl_result.save()
-                logger.info(f"Marked scraping complete for crawl result {crawl_result_id}")
-        except Exception as e:
-            logger.error(f"Error marking scraping complete: {str(e)}")
-
-    # Keep the scrape/download methods as they are for now (file-based)
-    async def run_scrape_download(
+    def run_scrape_download(
         self,
         task_id: str,
         cluster_ids: List[str],
@@ -932,7 +538,6 @@ class ApolloOrchestrator:
     ) -> Dict[str, Any]:
         """
         Run the scraping and downloading workflow with enhanced progress tracking.
-        Still uses file-based approach for now.
         
         Args:
             task_id: Task ID for tracking progress
@@ -953,11 +558,6 @@ class ApolloOrchestrator:
         
         # Log start of the workflow
         self.publish_log(task_id, "Starting scrape and download workflow", "info")
-        
-        # Get crawl_result_id from task params
-        task_status = task_manager.get_task_status(task_id)
-        task_params = task_status.get("params", {}) if task_status else {}
-        crawl_result_id = task_params.get("crawl_result_id")
         
         try:
             # === INITIALIZATION PHASE (0-5%) ===
@@ -1143,14 +743,6 @@ class ApolloOrchestrator:
             
             self.publish_log(task_id, "Finalizing workflow and generating summary...", "info")
             
-            # Mark scraping as complete in database if we have crawl_result_id and scraping was done
-            if crawl_result_id and cluster_ids:
-                try:
-                    await self.mark_scraping_complete(crawl_result_id)
-                    self.publish_log(task_id, f"Marked scraping as complete for crawl result {crawl_result_id}", "info")
-                except Exception as e:
-                    self.publish_log(task_id, f"Warning: Could not mark scraping as complete: {str(e)}", "warning")
-            
             # Add a brief delay to show the finalizing step
             time.sleep(0.5)
             
@@ -1177,55 +769,170 @@ class ApolloOrchestrator:
                 error=error_msg
             )
             return task_manager.get_task_status(task_id)
-
-    async def get_all_crawl_results(self, limit: int = 50) -> List[Dict[str, Any]]:
+    
+    def get_available_clusters(self, url_clusters_file: str = None) -> List[Dict[str, Any]]:
         """
-        Get all crawl results from database.
+        Get available clusters for scraping.
         
         Args:
-            limit: Maximum number of results to return
+            url_clusters_file: Path to the URL clusters file
             
         Returns:
-            List of crawl results
+            List of dictionaries with cluster information
         """
+        # Use the latest file if not specified
+        if not url_clusters_file:
+            # Find the most recent URL clusters file
+            cluster_files = [f for f in os.listdir(self.clusters_dir) if f.endswith("_url_clusters.json")]
+            if not cluster_files:
+                return []
+            
+            cluster_files.sort(reverse=True)  # Sort by name (which includes timestamp)
+            url_clusters_file = os.path.join(self.clusters_dir, cluster_files[0])
+        
+        # Load the clusters file
         try:
-            crawl_results = await CrawlResult.find().sort([("created_at", -1)]).limit(limit).to_list()
+            with open(url_clusters_file, 'r') as f:
+                clusters_data = json.load(f)
             
-            results = []
-            for crawl_result in crawl_results:
-                result_data = {
-                    "id": str(crawl_result.id),
-                    "task_id": crawl_result.task_id,
-                    "crawl_id": crawl_result.crawl_id,
-                    "created_at": crawl_result.created_at.isoformat(),
-                    "updated_at": crawl_result.updated_at.isoformat(),
-                    "crawl_complete": crawl_result.crawl_complete,
-                    "process_complete": crawl_result.process_complete,
-                    "cluster_complete": crawl_result.cluster_complete,
-                    "year_extraction_complete": crawl_result.year_extraction_complete,
-                    "scraping_complete": crawl_result.scraping_complete
-                }
-                
-                # Add summaries if available
-                if crawl_result.crawl_summary:
-                    result_data["crawl_summary"] = crawl_result.crawl_summary.dict()
-                
-                if crawl_result.process_summary:
-                    result_data["process_summary"] = crawl_result.process_summary.dict()
-                
-                if crawl_result.cluster_summary:
-                    result_data["cluster_summary"] = crawl_result.cluster_summary.dict()
-                
-                if crawl_result.year_extraction_summary:
-                    result_data["year_extraction_summary"] = crawl_result.year_extraction_summary.dict()
-                
-                results.append(result_data)
+            # Create a list of available clusters
+            clusters_info = []
             
-            return results
+            # Go through domains
+            for domain, domain_data in clusters_data.get("clusters", {}).items():
+                # Add domain level clusters
+                clusters_info.append({
+                    "id": domain_data.get("id"),
+                    "name": domain,
+                    "type": "domain",
+                    "url_count": domain_data.get("count", 0)
+                })
+                
+                # Add sub-clusters
+                for sub_cluster in domain_data.get("clusters", []):
+                    clusters_info.append({
+                        "id": sub_cluster.get("id"),
+                        "name": f"{domain} - {sub_cluster.get('path', 'unknown-path')}",
+                        "type": "path",
+                        "url_count": sub_cluster.get("url_count", 0)
+                    })
+            
+            return clusters_info
         
         except Exception as e:
-            logger.error(f"Error getting all crawl results: {str(e)}")
+            logger.error(f"Error getting available clusters: {str(e)}")
             return []
+    
+    def get_available_years(self, year_clusters_file: str = None) -> List[Dict[str, Any]]:
+        """
+        Get available years for downloading.
+        
+        Args:
+            year_clusters_file: Path to the year clusters file
+            
+        Returns:
+            List of dictionaries with year information
+        """
+        # Use the latest file if not specified
+        if not year_clusters_file:
+            # Find the most recent year clusters file
+            year_files = [f for f in os.listdir(self.clusters_dir) if f.endswith("_year_clusters.json")]
+            if not year_files:
+                return []
+            
+            year_files.sort(reverse=True)  # Sort by name (which includes timestamp)
+            year_clusters_file = os.path.join(self.clusters_dir, year_files[0])
+        
+        # Load the year clusters file
+        try:
+            with open(year_clusters_file, 'r') as f:
+                year_data = json.load(f)
+            
+            # Create a list of available years
+            years_info = []
+            
+            # Go through years
+            for year, files in year_data.items():
+                years_info.append({
+                    "year": year,
+                    "files_count": len(files)
+                })
+            
+            # Sort by year (newest first, but "No Year" at the end)
+            return sorted(
+                years_info,
+                key=lambda y: (y["year"] == "No Year", y["year"]),
+                reverse=True
+            )
+        
+        except Exception as e:
+            logger.error(f"Error getting available years: {str(e)}")
+            return []
+        
+    def get_cluster_by_id(self, cluster_id: str, url_clusters_file: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not url_clusters_file:
+            cluster_files = [f for f in os.listdir(self.clusters_dir) if f.endswith("_url_clusters.json")]
+            if not cluster_files:
+                return None
+            
+            cluster_files.sort(reverse=True)  
+            url_clusters_file = os.path.join(self.clusters_dir, cluster_files[0])
+        
+        try:
+            with open(url_clusters_file, 'r') as f:
+                clusters_data = json.load(f)
+            
+            for domain, domain_data in clusters_data.get("clusters", {}).items():
+                if domain_data.get("id") == cluster_id:
+                    return {
+                        "id": domain_data.get("id"),
+                        "name": domain,
+                        "type": "domain",
+                        "url_count": domain_data.get("count", 0),
+                        "clusters": domain_data.get("clusters", [])
+                    }
+                
+                for cluster in domain_data.get("clusters", []):
+                    if cluster.get("id") == cluster_id:
+                        return {
+                            "id": cluster.get("id"),
+                            "name": f"{domain} - {cluster.get('path', 'unknown-path')}",
+                            "type": "path",
+                            "url_count": cluster.get("url_count", 0),
+                            "urls": cluster.get("urls", [])
+                        }
+            
+            return None
+        
+        except Exception as e:
+            self.logger.error(f"Error getting cluster by ID: {str(e)}")
+            return None
+        
+    def get_year_by_id(self, year: str, year_clusters_file: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not year_clusters_file:
+            year_files = [f for f in os.listdir(self.clusters_dir) if f.endswith("_year_clusters.json")]
+            if not year_files:
+                return None
+            
+            year_files.sort(reverse=True)  
+            year_clusters_file = os.path.join(self.clusters_dir, year_files[0])
+        
+        try:
+            with open(year_clusters_file, 'r') as f:
+                year_data = json.load(f)
+            
+            if year in year_data:
+                return {
+                    "year": year,
+                    "files_count": len(year_data[year]),
+                    "files": year_data[year]
+                }
+            
+            return None
+        
+        except Exception as e:
+            self.logger.error(f"Error getting year by ID: {str(e)}")
+            return None
 
 # Create a global orchestrator instance
 orchestrator = ApolloOrchestrator()

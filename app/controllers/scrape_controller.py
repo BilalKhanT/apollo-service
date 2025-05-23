@@ -1,9 +1,7 @@
 from typing import List, Optional
 from fastapi import HTTPException
 from app.utils.task_manager import task_manager
-from app.utils.orchestrator import orchestrator
 from app.models.scrape_model import ScrapingStatus
-from app.models.database.database_models import CrawlResult
 
 class ScrapeController:
     @staticmethod
@@ -14,7 +12,6 @@ class ScrapeController:
     ) -> ScrapingStatus:
         url_clusters_file = None
         year_clusters_file = None
-        crawl_result_id = None
         
         if crawl_task_id:
             task_status = task_manager.get_task_status(crawl_task_id)
@@ -25,31 +22,8 @@ class ScrapeController:
                 raise HTTPException(status_code=400, detail=f"Task {crawl_task_id} is not completed")
             
             result = task_status.get("result", {})
-            crawl_result_id = result.get("crawl_result_id")
-            
-            if not crawl_result_id:
-                raise HTTPException(status_code=400, detail=f"Task {crawl_task_id} does not have associated crawl results")
-            
-            # Verify that the crawl result exists and has required data
-            try:
-                crawl_result = await CrawlResult.get(crawl_result_id)
-                if not crawl_result:
-                    raise HTTPException(status_code=404, detail=f"Crawl result {crawl_result_id} not found")
-                
-                # Check if clusters and years are available
-                if cluster_ids and not crawl_result.cluster_complete:
-                    raise HTTPException(status_code=400, detail=f"Clusters are not ready for crawl {crawl_task_id}")
-                
-                if years and not crawl_result.year_extraction_complete:
-                    raise HTTPException(status_code=400, detail=f"Year extraction is not ready for crawl {crawl_task_id}")
-                    
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Error verifying crawl result: {str(e)}")
-            
-            # Get output files from task result for backward compatibility
             output_files = result.get("output_files", {})
+            
             url_clusters_file = output_files.get("url_clusters_file")
             year_clusters_file = output_files.get("year_clusters_file")
         
@@ -58,8 +32,6 @@ class ScrapeController:
             params={
                 "cluster_ids": cluster_ids,
                 "years": years,
-                "crawl_task_id": crawl_task_id,
-                "crawl_result_id": crawl_result_id,
                 "url_clusters_file": url_clusters_file,
                 "year_clusters_file": year_clusters_file
             }

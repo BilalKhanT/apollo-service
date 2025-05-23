@@ -18,8 +18,8 @@ class TaskManager:
         self.tasks: Dict[str, Dict[str, Any]] = {}
         self.task_logs: Dict[str, List[Dict[str, Any]]] = {}
         self.max_logs_per_task = 1000
-        self.lock = threading.RLock()  # Changed to RLock to prevent deadlocks
-        self.logs_lock = threading.RLock()  # Changed to RLock
+        self.lock = threading.Lock()
+        self.logs_lock = threading.Lock()
         
         Path(data_dir).mkdir(exist_ok=True, parents=True)
     
@@ -71,12 +71,7 @@ class TaskManager:
         error: str = None
     ) -> bool:
         
-        # Use timeout to prevent hanging
-        if not self.lock.acquire(timeout=5.0):
-            logger.warning(f"Could not acquire lock for task {task_id} update")
-            return False
-            
-        try:
+        with self.lock:
             if task_id not in self.tasks:
                 logger.warning(f"Task {task_id} not found for update")
                 return False
@@ -101,8 +96,6 @@ class TaskManager:
             task['updated_at'] = datetime.now().isoformat()
             
             return True
-        finally:
-            self.lock.release()
     
     def _update_task_result(self, task: Dict[str, Any], new_result: Any) -> None:
 
@@ -117,12 +110,7 @@ class TaskManager:
     
     def store_log(self, task_id: str, log_entry: Dict[str, Any]) -> None:
         
-        # Use timeout to prevent hanging
-        if not self.logs_lock.acquire(timeout=2.0):
-            logger.warning(f"Could not acquire logs lock for task {task_id}")
-            return
-            
-        try:
+        with self.logs_lock:
             if task_id not in self.task_logs:
                 self.task_logs[task_id] = []
             
@@ -130,30 +118,16 @@ class TaskManager:
             
             if len(self.task_logs[task_id]) > self.max_logs_per_task:
                 self.task_logs[task_id] = self.task_logs[task_id][-self.max_logs_per_task:]
-        finally:
-            self.logs_lock.release()
     
     def get_and_clear_logs(self, task_id: str) -> List[Dict[str, Any]]:
-        """
-        Get logs and clear them after fetching (prevents memory bloat).
-        Uses non-blocking implementation to prevent hanging during polling.
-        """
         
-        # Use timeout to prevent hanging
-        if not self.logs_lock.acquire(timeout=2.0):
-            logger.warning(f"Could not acquire logs lock for task {task_id}")
-            return []
-            
-        try:
+        with self.logs_lock:
             logs = self.task_logs.get(task_id, [])
             
-            # Clear the logs after fetching them
             if task_id in self.task_logs:
                 self.task_logs[task_id] = []
             
             return logs
-        finally:
-            self.logs_lock.release()
     
     def publish_log(self, task_id: str, message: str, level: str = "info") -> bool:
         
@@ -182,26 +156,13 @@ class TaskManager:
         return True
     
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Non-blocking task status retrieval"""
-        
-        # Use timeout to prevent hanging
-        if not self.lock.acquire(timeout=2.0):
-            logger.warning(f"Could not acquire lock for task {task_id} status")
-            return None
-            
-        try:
-            return self.tasks.get(task_id, {}).copy() if task_id in self.tasks else None
-        finally:
-            self.lock.release()
+ 
+        with self.lock:
+            return self.tasks.get(task_id)
     
     def list_tasks(self, task_type: str = None, status: str = None, limit: int = 10) -> List[Dict[str, Any]]:
         
-        # Use timeout to prevent hanging
-        if not self.lock.acquire(timeout=5.0):
-            logger.warning("Could not acquire lock for listing tasks")
-            return []
-            
-        try:
+        with self.lock:
             filtered_tasks = list(self.tasks.values())
             
             if task_type:
@@ -217,20 +178,13 @@ class TaskManager:
             )
             
             return sorted_tasks[:limit]
-        finally:
-            self.lock.release()
     
     def cleanup_old_tasks(self, max_age_hours: int = 24) -> int:
         
         current_time = datetime.now()
         tasks_to_remove = []
         
-        # Use timeout to prevent hanging
-        if not self.lock.acquire(timeout=10.0):
-            logger.warning("Could not acquire lock for cleanup")
-            return 0
-            
-        try:
+        with self.lock:
             for task_id, task in self.tasks.items():
                 created_at = datetime.fromisoformat(task['created_at'])
                 age_hours = (current_time - created_at).total_seconds() / 3600
@@ -240,17 +194,11 @@ class TaskManager:
             
             for task_id in tasks_to_remove:
                 del self.tasks[task_id]
-        finally:
-            self.lock.release()
-
-        # Clean up logs separately
-        if self.logs_lock.acquire(timeout=5.0):
-            try:
-                for task_id in tasks_to_remove:
-                    if task_id in self.task_logs:
-                        del self.task_logs[task_id]
-            finally:
-                self.logs_lock.release()
+        
+        with self.logs_lock:
+            for task_id in tasks_to_remove:
+                if task_id in self.task_logs:
+                    del self.task_logs[task_id]
             
         return len(tasks_to_remove)
     

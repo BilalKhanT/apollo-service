@@ -1,25 +1,26 @@
+import json
 import re
 from urllib.parse import urlparse
 from collections import defaultdict
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Set, Tuple
-from app.models.database.database_models import ProcessedLinks
 
 class URLClusterer:
     def __init__(
         self,
-        crawl_result_id: str,
-        task_id: str,
+        input_file: str = "categorized_links.json",
+        output_file: str = "clustered_links.json",
         min_cluster_size: int = 2,
         path_depth: int = 2,
         similarity_threshold: float = 0.5,
         num_workers: int = 20 
     ):
         self.logger = self._setup_logger()
-        self.crawl_result_id = crawl_result_id
-        self.task_id = task_id
+        self.input_file = input_file
+        self.output_file = output_file
         self.min_cluster_size = min_cluster_size
         self.path_depth = path_depth
         self.similarity_threshold = similarity_threshold
@@ -28,35 +29,34 @@ class URLClusterer:
         self.status = "initialized"
         self.progress = 0.0
         self.start_time = 0.0
-        self.logger.info(f"URLClusterer initialized for crawl_result_id: {crawl_result_id} with min_cluster_size={min_cluster_size}, path_depth={path_depth}, similarity_threshold={similarity_threshold}, num_workers={num_workers}")
+        self.logger.info(f"URLClusterer initialized with min_cluster_size={min_cluster_size}, path_depth={path_depth}, similarity_threshold={similarity_threshold}, num_workers={num_workers}")
     
     def _setup_logger(self):
         logger = logging.getLogger("URLClusterer")
         logger.setLevel(logging.INFO)
 
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
         
         return logger
     
-    async def load_bank_links_from_database(self) -> List[str]:
-        """Load bank links from database instead of file."""
+    def load_links(self) -> List[str]:
         try:
-            processed_links = await ProcessedLinks.find_one(ProcessedLinks.crawl_result_id == self.crawl_result_id)
+            with open(self.input_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
             
-            if not processed_links:
-                self.logger.error(f"No processed links found for crawl_result_id: {self.crawl_result_id}")
+            if 'bank_links' not in data:
+                self.logger.error(f"'bank_links' key not found in {self.input_file}")
                 return []
             
-            bank_links = processed_links.bank_links
-            self.logger.info(f"Loaded {len(bank_links)} bank links from database")
-            return bank_links
-            
-        except Exception as e:
-            self.logger.error(f"Error loading bank links from database: {str(e)}")
+            return data['bank_links']
+        except FileNotFoundError:
+            self.logger.error(f"File not found: {self.input_file}")
+            return []
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON format in file: {self.input_file}")
             return []
     
     def extract_url_components(self, url: str) -> Dict[str, Any]:
@@ -280,15 +280,14 @@ class URLClusterer:
             'total_urls': total_urls
         }
     
-    async def cluster(self) -> Dict[str, Any]:
+    def cluster(self) -> Dict[str, Any]:
         import time
         self.start_time = time.time()
         self.status = "processing"
         self.progress = 0.0
         
-        self.logger.info(f"Starting URL clustering for crawl_result_id: {self.crawl_result_id}")
-        bank_links = await self.load_bank_links_from_database()
-        
+        self.logger.info("Starting URL clustering")
+        bank_links = self.load_links()
         if not bank_links:
             self.logger.error("No bank links found to cluster")
             self.status = "error"
@@ -301,7 +300,12 @@ class URLClusterer:
                 },
                 "clusters": {}
             }
-            
+
+            os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+            with open(self.output_file, 'w', encoding='utf-8') as f:
+                json.dump(empty_result, f, indent=2)
+                
+            self.logger.info(f"Empty results saved to {self.output_file}")
             return empty_result
         
         self.logger.info(f"Loaded {len(bank_links)} bank links for clustering")
@@ -335,8 +339,12 @@ class URLClusterer:
             'clusters': formatted_clusters
         }
 
+        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+        with open(self.output_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2)
+        
         execution_time = time.time() - self.start_time
-        self.logger.info(f"Clustering completed in {execution_time:.2f} seconds")
+        self.logger.info(f"Clustering completed in {execution_time:.2f} seconds. Results saved to {self.output_file}")
 
         self.status = "completed"
         self.progress = 100.0

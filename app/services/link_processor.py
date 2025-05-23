@@ -1,17 +1,18 @@
+import json
 import re
 import threading
+import os
 import time
 import logging
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Set, Any, Optional, Tuple
-from app.models.database.database_models import CrawlData, ProcessedLinks
 
 class LinkProcessor:
     def __init__(
         self,
-        crawl_result_id: str,
-        task_id: str,
+        input_file: str = "all_links.json",
+        output_file: str = "categorized_links.json",
         num_workers: int = 20,
         file_extensions: Optional[List[str]] = None,
         social_media_keywords: Optional[List[str]] = None,
@@ -19,8 +20,8 @@ class LinkProcessor:
         chunk_size: int = 500  
     ):
         self.logger = self._setup_logger()
-        self.crawl_result_id = crawl_result_id
-        self.task_id = task_id
+        self.input_file = input_file
+        self.output_file = output_file
         self.num_workers = num_workers
         self.chunk_size = chunk_size
         self.file_extensions = file_extensions or [
@@ -55,35 +56,34 @@ class LinkProcessor:
         self.start_time = 0.0
         self.processed_counter = 0
         self.processed_lock = threading.Lock()
-        self.logger.info(f"LinkProcessor initialized for crawl_result_id: {crawl_result_id} with {num_workers} workers and chunk_size={chunk_size}")
+        self.logger.info(f"LinkProcessor initialized with {num_workers} workers and chunk_size={chunk_size}")
     
     def _setup_logger(self):
         logger = logging.getLogger("LinkProcessor")
         logger.setLevel(logging.INFO)
 
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
         
         return logger
     
-    async def load_links_from_database(self) -> List[str]:
-        """Load links from database instead of file."""
+    def load_links(self) -> List[str]:
         try:
-            crawl_data = await CrawlData.find_one(CrawlData.crawl_result_id == self.crawl_result_id)
+            with open(self.input_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
             
-            if not crawl_data:
-                self.logger.error(f"No crawl data found for crawl_result_id: {self.crawl_result_id}")
+            if 'all_links' not in data:
+                self.logger.error(f"Invalid JSON format: 'all_links' key not found in {self.input_file}")
                 return []
             
-            all_links = crawl_data.all_links
-            self.logger.info(f"Loaded {len(all_links)} links from database")
-            return all_links
-            
-        except Exception as e:
-            self.logger.error(f"Error loading links from database: {str(e)}")
+            return data['all_links']
+        except FileNotFoundError:
+            self.logger.error(f"File not found: {self.input_file}")
+            return []
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON format in file: {self.input_file}")
             return []
     
     def categorize_link(self, link: str) -> str:
@@ -158,30 +158,7 @@ class LinkProcessor:
                 self.logger.error(f"Error in worker {worker_id}: {str(e)}")
                 self.work_queue.task_done()
     
-    async def save_results_to_database(self, results: Dict[str, Any]) -> None:
-        """Save processed results to database instead of file."""
-        try:
-            # Delete existing processed links for this crawl result
-            await ProcessedLinks.find(ProcessedLinks.crawl_result_id == self.crawl_result_id).delete()
-            
-            # Create new processed links document
-            processed_links = ProcessedLinks(
-                crawl_result_id=self.crawl_result_id,
-                task_id=self.task_id,
-                file_links=results['file_links'],
-                social_media_links=results['social_media_links'],
-                bank_links=results['bank_links'],
-                misc_links=results['misc_links']
-            )
-            
-            await processed_links.save()
-            self.logger.info(f"Processed links saved to database for crawl_result_id: {self.crawl_result_id}")
-            
-        except Exception as e:
-            self.logger.error(f"Error saving processed links to database: {str(e)}")
-            raise
-    
-    async def process(self) -> Dict[str, Any]:
+    def process(self) -> Dict[str, Any]:
         import threading
         
         self.start_time = time.time()
@@ -189,9 +166,8 @@ class LinkProcessor:
         self.progress = 0.0
         self.processed_counter = 0
         
-        self.logger.info(f"Starting to process links from database for crawl_result_id: {self.crawl_result_id}")
-        all_links = await self.load_links_from_database()
-        
+        self.logger.info(f"Starting to process links from {self.input_file}")
+        all_links = self.load_links()
         empty_results = {
             'summary': {
                 'total_links': 0,
@@ -211,7 +187,11 @@ class LinkProcessor:
             self.logger.error("No links found to process")
             self.status = "error"
             empty_results['summary']['processing_time_seconds'] = time.time() - self.start_time
-            await self.save_results_to_database(empty_results)
+            os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+            with open(self.output_file, 'w', encoding='utf-8') as f:
+                json.dump(empty_results, f, indent=2)
+                
+            self.logger.info(f"Empty results saved to {self.output_file}")
             return empty_results
         
         total_links = len(all_links)
@@ -278,10 +258,12 @@ class LinkProcessor:
             'misc_links': sorted(list(self.misc_links))
         }
 
-        # Save to database instead of file
-        await self.save_results_to_database(results)
+        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+        with open(self.output_file, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2)
         
         self.logger.info(f"Processing completed in {time.time() - self.start_time:.2f} seconds")
+        self.logger.info(f"Results saved to {self.output_file}")
         self.status = "completed"
         self.progress = 100.0
         return results

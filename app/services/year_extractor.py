@@ -1,3 +1,4 @@
+import json
 import re
 import os
 import threading
@@ -6,19 +7,18 @@ from urllib.parse import urlparse, parse_qs
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Any
-from app.models.database.database_models import ProcessedLinks
 
 class YearExtractor:
     def __init__(
         self,
-        crawl_result_id: str,
-        task_id: str,
+        input_file: str = "categorized_links.json",
+        output_file: str = "clustered_by_year.json",
         num_workers: int = 20,  
         batch_size: int = 500  
     ):
         self.logger = self._setup_logger()
-        self.crawl_result_id = crawl_result_id
-        self.task_id = task_id
+        self.input_file = input_file
+        self.output_file = output_file
         self.num_workers = num_workers
         self.batch_size = batch_size
         self.full_year_pattern = re.compile(r'(?:19|20)\d{2}')
@@ -28,35 +28,34 @@ class YearExtractor:
         self.progress = 0.0
         self.start_time = 0.0
         self.processed_count = 0
-        self.logger.info(f"YearExtractor initialized for crawl_result_id: {crawl_result_id} with {num_workers} workers and batch_size={batch_size}")
+        self.logger.info(f"YearExtractor initialized with {num_workers} workers and batch_size={batch_size}")
     
     def _setup_logger(self):
         logger = logging.getLogger("YearExtractor")
         logger.setLevel(logging.INFO)
 
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
         return logger
     
-    async def load_file_links_from_database(self) -> List[str]:
-        """Load file links from database instead of file."""
+    def load_file_links(self) -> List[str]:
         try:
-            processed_links = await ProcessedLinks.find_one(ProcessedLinks.crawl_result_id == self.crawl_result_id)
+            with open(self.input_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
             
-            if not processed_links:
-                self.logger.error(f"No processed links found for crawl_result_id: {self.crawl_result_id}")
+            if 'file_links' not in data:
+                self.logger.error(f"'file_links' key not found in {self.input_file}")
                 return []
             
-            file_links = processed_links.file_links
-            self.logger.info(f"Loaded {len(file_links)} file links from database")
-            return file_links
-            
-        except Exception as e:
-            self.logger.error(f"Error loading file links from database: {str(e)}")
+            return data['file_links']
+        except FileNotFoundError:
+            self.logger.error(f"File not found: {self.input_file}")
+            return []
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON format in file: {self.input_file}")
             return []
     
     def extract_from_filename(self, filename: str) -> Optional[str]:
@@ -131,19 +130,24 @@ class YearExtractor:
         
         return merged
     
-    async def process(self) -> Dict[str, List[str]]:
+    def process(self) -> Dict[str, List[str]]:
         import time
         self.start_time = time.time()
         self.status = "processing"
         self.progress = 0.0
         self.processed_count = 0
-        self.logger.info(f"Starting year extraction from database for crawl_result_id: {self.crawl_result_id}")
+        self.logger.info(f"Starting year extraction from {self.input_file}")
 
-        file_links = await self.load_file_links_from_database()
+        file_links = self.load_file_links()
         if not file_links:
             self.logger.warning("No file links found to process")
             self.status = "completed"
             self.progress = 100.0
+            
+            os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+            with open(self.output_file, 'w', encoding='utf-8') as f:
+                json.dump({}, f, indent=4)
+                
             return {}
         
         self.total_links = len(file_links)
@@ -186,12 +190,16 @@ class YearExtractor:
                 examples = clustered["No Year"][:min(5, no_year_count)]
                 self.logger.debug(f"Examples of 'No Year' links: {examples}")
 
+        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
+        with open(self.output_file, 'w', encoding='utf-8') as f:
+            json.dump(clustered, f, indent=4)
+        
         execution_time = time.time() - self.start_time
-        self.logger.info(f"Year clustering completed in {execution_time:.2f} seconds")
+        self.logger.info(f"Year clustering completed in {execution_time:.2f} seconds. Results saved to {self.output_file}")
         self.status = "completed"
         self.progress = 100.0
         
-        return dict(clustered)
+        return clustered
     
     def get_status(self) -> Dict[str, Any]:
         import time
