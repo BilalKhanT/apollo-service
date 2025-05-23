@@ -20,9 +20,9 @@ class ScrapeController:
             if cluster_ids and crawl_result.clusters:
                 available_cluster_ids = set()
                 for domain_data in crawl_result.clusters.values():
-                    available_cluster_ids.add(domain_data.get("id"))
-                    for cluster in domain_data.get("clusters", []):
-                        available_cluster_ids.add(cluster.get("id"))
+                    available_cluster_ids.add(domain_data.id)
+                    for cluster in domain_data.clusters:
+                        available_cluster_ids.add(cluster.id)
                 
                 invalid_clusters = [cid for cid in cluster_ids if cid not in available_cluster_ids]
                 if invalid_clusters:

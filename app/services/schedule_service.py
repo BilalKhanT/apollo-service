@@ -68,11 +68,11 @@ class ScheduleService:
             # Log current time for debugging
             logger.debug(f"Checking schedules at {current_time_utc} UTC ({current_time_karachi.strftime('%Y-%m-%d %H:%M:%S')} Karachi)")
             
-            # Find schedules due for execution (with a 2-minute buffer for safety)
-            buffer_time = current_time_utc + timedelta(minutes=2)
+            # Find schedules due for execution (current time only, no buffer)
+            # We don't want future schedules, only those that are actually due now
             due_schedules = await CrawlSchedule.find(
                 CrawlSchedule.status == ScheduleStatus.ACTIVE,
-                CrawlSchedule.next_run_at <= buffer_time
+                CrawlSchedule.next_run_at <= current_time_utc
             ).to_list()
             
             if due_schedules:
@@ -92,9 +92,9 @@ class ScheduleService:
 
                     if await self._is_url_being_crawled(schedule.base_url):
                         logger.warning(f"URL {schedule.base_url} is already being crawled, skipping scheduled run")
-                        # Recalculate next run time
+                        # Recalculate next run time with force_next_week=True
                         old_next_run = schedule.next_run_at
-                        schedule.next_run_at = schedule.calculate_next_run()
+                        schedule.next_run_at = schedule.calculate_next_run(force_next_week=True)
                         await schedule.save()
                         new_time_karachi = schedule.next_run_at.replace(tzinfo=pytz.UTC).astimezone(self.karachi_tz)
                         logger.info(f"Rescheduled {schedule.id} from {old_next_run} to {schedule.next_run_at} UTC ({new_time_karachi.strftime('%Y-%m-%d %H:%M:%S')} Karachi)")

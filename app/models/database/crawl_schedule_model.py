@@ -70,10 +70,7 @@ class CrawlSchedule(Document):
     def get_time_object(self) -> time:
         return time.fromisoformat(self.time_of_day)
     
-    def calculate_next_run(self) -> datetime:
-        """
-        Calculate the next run time in UTC, treating time_of_day as Asia/Karachi time.
-        """
+    def calculate_next_run(self, force_next_week: bool = False) -> datetime:
         from datetime import datetime, timedelta
         
         # Asia/Karachi timezone
@@ -104,26 +101,33 @@ class CrawlSchedule(Document):
         logger.info(f"DEBUG: Current weekday: {current_weekday}")
         logger.info(f"DEBUG: Target time: {target_time} (Karachi time)")
         
+        # Calculate days ahead
         days_ahead = target_weekday - current_weekday
 
-        if days_ahead == 0:
-            # Same day - check if time has passed
+        if days_ahead == 0 and not force_next_week:
+            # Same day - check if time has passed with a buffer
             scheduled_time_karachi = datetime.combine(now_karachi.date(), target_time)
             scheduled_time_karachi = karachi_tz.localize(scheduled_time_karachi)
             
-            logger.info(f"DEBUG: Scheduled time Karachi: {scheduled_time_karachi}")
+            # Add a 5-minute buffer to prevent immediate re-scheduling
+            time_buffer = timedelta(minutes=1)
+            buffer_time = now_karachi + time_buffer
             
-            if scheduled_time_karachi > now_karachi:
-                # Time hasn't passed yet today
+            logger.info(f"DEBUG: Scheduled time Karachi: {scheduled_time_karachi}")
+            logger.info(f"DEBUG: Current time + buffer: {buffer_time}")
+            
+            if scheduled_time_karachi > buffer_time:
+                # Time hasn't passed yet today (with buffer)
                 next_run_utc = scheduled_time_karachi.astimezone(pytz.UTC).replace(tzinfo=None)
                 logger.info(f"DEBUG: Next run today at: {next_run_utc} UTC ({scheduled_time_karachi} Karachi)")
                 return next_run_utc
             else:
-                # Time has passed, schedule for next week
+                # Time has passed or is too close, schedule for next week
                 days_ahead = 7
-                logger.info(f"DEBUG: Time passed today, scheduling for next week")
-        elif days_ahead < 0:
-            days_ahead += 7
+                logger.info(f"DEBUG: Time passed or too close, scheduling for next week")
+        elif days_ahead <= 0 or force_next_week:
+            # If force_next_week is True or days_ahead is negative/zero, go to next week
+            days_ahead = 7 + (days_ahead if days_ahead < 0 else 0)
             logger.info(f"DEBUG: Adjusted days ahead: {days_ahead}")
 
         # Calculate next run date in Karachi timezone
@@ -141,8 +145,9 @@ class CrawlSchedule(Document):
         self.last_run_at = datetime.utcnow()
         self.last_task_id = task_id
         self.total_runs += 1
-        self.next_run_at = self.calculate_next_run()
+        self.next_run_at = self.calculate_next_run(force_next_week=True)
         self.update_timestamp()
+        logger.info(f"Marked run started for schedule {self.id}. Next run: {self.next_run_at} UTC")
     
     def mark_run_completed(self, success: bool, error: Optional[str] = None):
         if success:

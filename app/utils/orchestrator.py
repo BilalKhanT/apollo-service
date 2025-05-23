@@ -685,13 +685,30 @@ class ApolloOrchestrator:
                 temp_clusters_file = os.path.join(self.temp_dir, f"temp_clusters_{timestamp}.json")
                 
                 # Convert database clusters to file format for scraper
+                # Convert database clusters to file format for scraper
+                clusters_dict = {}
+                for domain_name, domain_data in crawl_result.clusters.items():
+                    clusters_dict[domain_name] = {
+                        "id": domain_data.id,
+                        "count": domain_data.count,
+                        "clusters": [
+                            {
+                                "id": cluster.id,
+                                "path": cluster.path,
+                                "url_count": cluster.url_count,
+                                "urls": cluster.urls
+                            }
+                            for cluster in domain_data.clusters
+                        ]
+                    }
+
                 clusters_data = {
                     "summary": {
                         "total_domains": len(crawl_result.clusters),
-                        "total_clusters": sum(len(domain_data.get("clusters", [])) for domain_data in crawl_result.clusters.values()),
-                        "total_urls": sum(sum(cluster.get("url_count", 0) for cluster in domain_data.get("clusters", [])) for domain_data in crawl_result.clusters.values())
+                        "total_clusters": sum(len(domain_data.clusters) for domain_data in crawl_result.clusters.values()),
+                        "total_urls": sum(sum(cluster.url_count for cluster in domain_data.clusters) for domain_data in crawl_result.clusters.values())
                     },
-                    "clusters": crawl_result.clusters
+                    "clusters": clusters_dict
                 }
                 
                 with open(temp_clusters_file, 'w', encoding='utf-8') as f:
