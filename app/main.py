@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from app.api.routes import crawl, cluster, scrape, logs
+from app.api.routes import crawl, cluster, scrape, logs, schedule
 from app.utils.database import connect_to_mongo, close_mongo_connection
+from app.services.schedule_service import schedule_service
 
 load_dotenv()
 
@@ -21,22 +21,30 @@ async def lifespan(app: FastAPI):
     try:
         await connect_to_mongo()
         logger.info("Database connection established successfully")
+
+        await schedule_service.start()
+        logger.info("Schedule service started successfully")
+        
     except Exception as e:
-        logger.error(f"Failed to connect to database: {str(e)}")
+        logger.error(f"Failed to initialize services: {str(e)}")
     
     yield
 
     logger.info("Shutting down Apollo Web Crawler API...")
     try:
+        await schedule_service.stop()
+        logger.info("Schedule service stopped successfully")
+
         await close_mongo_connection()
         logger.info("Database connection closed successfully")
+        
     except Exception as e:
-        logger.error(f"Error closing database connection: {str(e)}")
+        logger.error(f"Error during shutdown: {str(e)}")
 
 app = FastAPI(
     title="Apollo Web Crawler API",
-    description="Apollo Web Scrapper",
-    version="2.0.0",
+    description="Apollo Web Scrapper with Scheduled Crawling",
+    version="2.1.0", 
     lifespan=lifespan
 )
 
@@ -48,11 +56,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include all routers
 app.include_router(crawl.router)
 app.include_router(cluster.router)
 app.include_router(scrape.router)
 app.include_router(logs.router)
+app.include_router(schedule.router) 
 
 @app.get("/health")
 async def health_check():
@@ -67,11 +75,14 @@ async def health_check():
     except Exception as e:
         logger.error(f"Database health check failed: {str(e)}")
         db_status = "error"
+
+    schedule_status = schedule_service.get_status()
     
     return {
         "status": "healthy",
         "database": db_status,
-        "version": "2.0.0"
+        "schedule_service": schedule_status,
+        "version": "2.1.0"
     }
 
 if __name__ == "__main__":

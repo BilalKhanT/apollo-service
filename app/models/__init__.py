@@ -1,5 +1,3 @@
-# app/models/__init__.py
-
 from .crawl_model import CrawlRequest, CrawlStatus
 from .scrape_model import ScrapingRequest, ScrapingStatus
 from .cluster_model import (
@@ -11,7 +9,17 @@ from .cluster_model import (
     YearDetailResponse
 )
 from .log_model import LogEntry, LogResponse
+from .schedule_model import (
+    CrawlScheduleRequest,
+    CrawlScheduleResponse,
+    CrawlScheduleUpdateRequest,
+    ScheduleListResponse,
+    ScheduleStatusResponse,
+    DayOfWeek,
+    ScheduleStatus
+)
 from .database.crawl_result_model import CrawlResult
+from .database.crawl_schedule_model import CrawlSchedule
 
 __all__ = [
     'CrawlRequest',
@@ -27,4 +35,12 @@ __all__ = [
     'ClusterDetailResponse',
     'YearDetailResponse',
     'CrawlResult',
+    'CrawlSchedule',
+    'CrawlScheduleRequest',
+    'CrawlScheduleResponse',
+    'CrawlScheduleUpdateRequest',
+    'ScheduleListResponse',
+    'ScheduleStatusResponse',
+    'DayOfWeek',
+    'ScheduleStatus',
 ]

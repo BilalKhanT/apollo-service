@@ -72,16 +72,19 @@ async def connect_to_mongo():
         await db.client.admin.command('ping')
         logger.info("Successfully connected to MongoDB Atlas")
 
+        # Import all models
         from app.models.database.crawl_result_model import CrawlResult
+        from app.models.database.crawl_schedule_model import CrawlSchedule
 
         await init_beanie(
             database=db.database,
             document_models=[
                 CrawlResult,
+                CrawlSchedule,  # Add the new schedule model
             ]
         )
 
-        logger.info("Beanie ODM initialized successfully")
+        logger.info("Beanie ODM initialized successfully with all models")
         
     except Exception as e:
         logger.error(f"Failed to connect to MongoDB Atlas: {str(e)}")
