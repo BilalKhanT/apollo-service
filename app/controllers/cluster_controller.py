@@ -1,6 +1,5 @@
 from typing import Dict, Any, Optional
 from fastapi import HTTPException
-from app.utils.task_manager import task_manager
 from app.controllers.crawl_result_controller import CrawlResultController
 
 
@@ -37,18 +36,18 @@ class ClusterController:
                 
                 for domain, domain_data in crawl_result.clusters.items():
                     clusters_info.append({
-                        "id": domain_data.get("id"),
+                        "id": domain_data.id, 
                         "name": domain,
                         "type": "domain",
-                        "url_count": domain_data.get("count", 0)
+                        "url_count": domain_data.count 
                     })
                     
-                    for sub_cluster in domain_data.get("clusters", []):
+                    for sub_cluster in domain_data.clusters:
                         clusters_info.append({
-                            "id": sub_cluster.get("id"),
-                            "name": f"{domain} - {sub_cluster.get('path', 'unknown-path')}",
+                            "id": sub_cluster.id,  
+                            "name": f"{domain} - {sub_cluster.path}", 
                             "type": "path",
-                            "url_count": sub_cluster.get("url_count", 0)
+                            "url_count": sub_cluster.url_count  
                         })
                 
                 response["clusters"] = clusters_info
@@ -101,23 +100,31 @@ class ClusterController:
                 raise HTTPException(status_code=404, detail="No crawl results with clusters found")
 
             for domain, domain_data in crawl_result.clusters.items():
-                if domain_data.get("id") == cluster_id:
+                if domain_data.id == cluster_id:  
                     return {
-                        "id": domain_data.get("id"),
+                        "id": domain_data.id,
                         "name": domain,
                         "type": "domain",
-                        "url_count": domain_data.get("count", 0),
-                        "clusters": domain_data.get("clusters", [])
+                        "url_count": domain_data.count,
+                        "clusters": [
+                            {
+                                "id": cluster.id,
+                                "path": cluster.path,
+                                "url_count": cluster.url_count,
+                                "urls": cluster.urls
+                            }
+                            for cluster in domain_data.clusters
+                        ]
                     }
                 
-                for cluster in domain_data.get("clusters", []):
-                    if cluster.get("id") == cluster_id:
+                for cluster in domain_data.clusters:
+                    if cluster.id == cluster_id:  
                         return {
-                            "id": cluster.get("id"),
-                            "name": f"{domain} - {cluster.get('path', 'unknown-path')}",
+                            "id": cluster.id,
+                            "name": f"{domain} - {cluster.path}",
                             "type": "path",
-                            "url_count": cluster.get("url_count", 0),
-                            "urls": cluster.get("urls", [])
+                            "url_count": cluster.url_count,
+                            "urls": cluster.urls
                         }
             
             raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")

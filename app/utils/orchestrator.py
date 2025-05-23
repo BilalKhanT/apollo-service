@@ -882,23 +882,11 @@ class ApolloOrchestrator:
             return task_manager.get_task_status(task_id)
     
     async def get_available_clusters(self, crawl_task_id: str = None) -> List[Dict[str, Any]]:
-        """
-        Get available clusters for scraping from DATABASE.
-        
-        Args:
-            crawl_task_id: Task ID to get clusters for (if None, gets most recent)
-            
-        Returns:
-            List of dictionaries with cluster information
-        """
         try:
             crawl_result = None
-            
             if crawl_task_id:
-                # Get specific crawl result
                 crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
             else:
-                # Get the most recent crawl result
                 crawl_results = await CrawlResultController.list_crawl_results()
                 if crawl_results:
                     crawl_results.sort(key=lambda x: x.created_at, reverse=True)
@@ -907,26 +895,21 @@ class ApolloOrchestrator:
             if not crawl_result or not crawl_result.clusters:
                 return []
             
-            # Create a list of available clusters
             clusters_info = []
-            
-            # Go through domains
             for domain, domain_data in crawl_result.clusters.items():
-                # Add domain level clusters
                 clusters_info.append({
-                    "id": domain_data.get("id"),
+                    "id": domain_data.id,  
                     "name": domain,
                     "type": "domain",
-                    "url_count": domain_data.get("count", 0)
+                    "url_count": domain_data.count 
                 })
                 
-                # Add sub-clusters
-                for sub_cluster in domain_data.get("clusters", []):
+                for sub_cluster in domain_data.clusters:
                     clusters_info.append({
-                        "id": sub_cluster.get("id"),
-                        "name": f"{domain} - {sub_cluster.get('path', 'unknown-path')}",
+                        "id": sub_cluster.id,  
+                        "name": f"{domain} - {sub_cluster.path}",  
                         "type": "path",
-                        "url_count": sub_cluster.get("url_count", 0)
+                        "url_count": sub_cluster.url_count  
                     })
             
             return clusters_info
@@ -983,24 +966,11 @@ class ApolloOrchestrator:
             return []
         
     async def get_cluster_by_id(self, cluster_id: str, crawl_task_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """
-        Get cluster by ID from DATABASE.
-        
-        Args:
-            cluster_id: ID of the cluster to find
-            crawl_task_id: Task ID to get cluster from (if None, gets most recent)
-            
-        Returns:
-            Cluster data if found, None otherwise
-        """
         try:
             crawl_result = None
-            
             if crawl_task_id:
-                # Get specific crawl result
                 crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
             else:
-                # Get the most recent crawl result
                 crawl_results = await CrawlResultController.list_crawl_results()
                 if crawl_results:
                     crawl_results.sort(key=lambda x: x.created_at, reverse=True)
@@ -1008,32 +978,39 @@ class ApolloOrchestrator:
             
             if not crawl_result or not crawl_result.clusters:
                 return None
-            
+
             for domain, domain_data in crawl_result.clusters.items():
-                if domain_data.get("id") == cluster_id:
+                if domain_data.id == cluster_id:  
                     return {
-                        "id": domain_data.get("id"),
+                        "id": domain_data.id,
                         "name": domain,
                         "type": "domain",
-                        "url_count": domain_data.get("count", 0),
-                        "clusters": domain_data.get("clusters", [])
+                        "url_count": domain_data.count,
+                        "clusters": [
+                            {
+                                "id": cluster.id,
+                                "path": cluster.path,
+                                "url_count": cluster.url_count,
+                                "urls": cluster.urls
+                            }
+                            for cluster in domain_data.clusters
+                        ]
                     }
                 
-                for cluster in domain_data.get("clusters", []):
-                    if cluster.get("id") == cluster_id:
+                for cluster in domain_data.clusters:
+                    if cluster.id == cluster_id:  
                         return {
-                            "id": cluster.get("id"),
-                            "name": f"{domain} - {cluster.get('path', 'unknown-path')}",
+                            "id": cluster.id,
+                            "name": f"{domain} - {cluster.path}",
                             "type": "path",
-                            "url_count": cluster.get("url_count", 0),
-                            "urls": cluster.get("urls", [])
+                            "url_count": cluster.url_count,
+                            "urls": cluster.urls
                         }
             
             return None
         
         except Exception as e:
             self.logger.error(f"Error getting cluster by ID: {str(e)}")
-            return None
         
     async def get_year_by_id(self, year: str, crawl_task_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """

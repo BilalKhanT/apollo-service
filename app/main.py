@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Apollo Web Crawler API",
-    description="API for the Apollo Web Scrapper with Database Integration.",
+    description="Apollo Web Scrapper",
     version="2.0.0",
     lifespan=lifespan
 )
