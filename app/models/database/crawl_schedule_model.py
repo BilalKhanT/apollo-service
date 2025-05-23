@@ -2,8 +2,11 @@ from beanie import Document
 from typing import Optional
 from pydantic import Field, validator
 from datetime import datetime, time
+import pytz
 from enum import Enum
+import logging
 
+logger = logging.getLogger(__name__)
 
 class ScheduleStatus(str, Enum):
     ACTIVE = "active"
@@ -25,7 +28,7 @@ class CrawlSchedule(Document):
     base_url: str = Field(..., index=True)
     schedule_name: Optional[str] = None
     day_of_week: DayOfWeek = Field(..., description="Day of the week to run the crawl")
-    time_of_day: str = Field(..., description="Time of day to run the crawl (HH:MM format)")
+    time_of_day: str = Field(..., description="Time of day to run the crawl (HH:MM format in Asia/Karachi timezone)")
     max_links_to_scrape: Optional[int] = None
     max_pages_to_scrape: Optional[int] = None
     depth_limit: Optional[int] = None
@@ -68,9 +71,21 @@ class CrawlSchedule(Document):
         return time.fromisoformat(self.time_of_day)
     
     def calculate_next_run(self) -> datetime:
+        """
+        Calculate the next run time in UTC, treating time_of_day as Asia/Karachi time.
+        """
         from datetime import datetime, timedelta
-
-        now = datetime.utcnow().replace(second=0, microsecond=0)
+        
+        # Asia/Karachi timezone
+        karachi_tz = pytz.timezone('Asia/Karachi')
+        
+        # Get current time in Karachi timezone
+        now_utc = datetime.utcnow()
+        now_karachi = now_utc.replace(tzinfo=pytz.UTC).astimezone(karachi_tz)
+        
+        logger.info(f"DEBUG: Current UTC time: {now_utc}")
+        logger.info(f"DEBUG: Current Karachi time: {now_karachi}")
+        
         day_mapping = {
             DayOfWeek.MONDAY: 0,
             DayOfWeek.TUESDAY: 1,
@@ -80,23 +95,47 @@ class CrawlSchedule(Document):
             DayOfWeek.SATURDAY: 5,
             DayOfWeek.SUNDAY: 6
         }
+        
         target_weekday = day_mapping[self.day_of_week]
-        current_weekday = now.weekday()
+        current_weekday = now_karachi.weekday()
         target_time = self.get_time_object()
+        
+        logger.info(f"DEBUG: Target weekday: {target_weekday} ({self.day_of_week})")
+        logger.info(f"DEBUG: Current weekday: {current_weekday}")
+        logger.info(f"DEBUG: Target time: {target_time} (Karachi time)")
+        
         days_ahead = target_weekday - current_weekday
 
         if days_ahead == 0:
-            scheduled_time_today = datetime.combine(now.date(), target_time)
-            if scheduled_time_today >= now:
-                return scheduled_time_today
+            # Same day - check if time has passed
+            scheduled_time_karachi = datetime.combine(now_karachi.date(), target_time)
+            scheduled_time_karachi = karachi_tz.localize(scheduled_time_karachi)
+            
+            logger.info(f"DEBUG: Scheduled time Karachi: {scheduled_time_karachi}")
+            
+            if scheduled_time_karachi > now_karachi:
+                # Time hasn't passed yet today
+                next_run_utc = scheduled_time_karachi.astimezone(pytz.UTC).replace(tzinfo=None)
+                logger.info(f"DEBUG: Next run today at: {next_run_utc} UTC ({scheduled_time_karachi} Karachi)")
+                return next_run_utc
             else:
+                # Time has passed, schedule for next week
                 days_ahead = 7
+                logger.info(f"DEBUG: Time passed today, scheduling for next week")
         elif days_ahead < 0:
             days_ahead += 7
+            logger.info(f"DEBUG: Adjusted days ahead: {days_ahead}")
 
-        next_run_date = now + timedelta(days=days_ahead)
-        next_run = datetime.combine(next_run_date.date(), target_time)
-        return next_run
+        # Calculate next run date in Karachi timezone
+        next_run_date_karachi = now_karachi + timedelta(days=days_ahead)
+        next_run_karachi = datetime.combine(next_run_date_karachi.date(), target_time)
+        next_run_karachi = karachi_tz.localize(next_run_karachi)
+        
+        # Convert to UTC for storage
+        next_run_utc = next_run_karachi.astimezone(pytz.UTC).replace(tzinfo=None)
+        
+        logger.info(f"DEBUG: Next run calculated: {next_run_utc} UTC ({next_run_karachi} Karachi)")
+        return next_run_utc
     
     def mark_run_started(self, task_id: str):
         self.last_run_at = datetime.utcnow()
