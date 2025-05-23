@@ -53,21 +53,6 @@ app.include_router(cluster.router)
 app.include_router(scrape.router)
 app.include_router(logs.router)
 
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "message": "Apollo Web Crawler API",
-        "version": "2.0.0",
-        "description": "Database-integrated web crawling and content extraction API",
-        "endpoints": {
-            "crawl": "/api/crawl",
-            "clusters": "/api/clusters", 
-            "scrape": "/api/scrape",
-            "logs": "/api/logs"
-        }
-    }
-
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
