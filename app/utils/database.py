@@ -72,12 +72,15 @@ async def connect_to_mongo():
         await db.client.admin.command('ping')
         logger.info("Successfully connected to MongoDB Atlas")
 
-        # # Initialize Beanie ODM with updated models
-        # from app.models.database.database_models import CrawlResult, ClusterDocument, YearDocument, CrawlData, ProcessedLinks
-        # await init_beanie(
-        #     database=db.database,
-        #     document_models=[CrawlResult, ClusterDocument, YearDocument, CrawlData, ProcessedLinks]
-        # )
+        from app.models.database.crawl_result_model import CrawlResult
+
+        await init_beanie(
+            database=db.database,
+            document_models=[
+                CrawlResult,
+            ]
+        )
+
         logger.info("Beanie ODM initialized successfully")
         
     except Exception as e:
