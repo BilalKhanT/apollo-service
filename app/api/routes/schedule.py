@@ -45,7 +45,4 @@ async def delete_schedule(schedule_id: str):
 async def get_schedule_status(schedule_id: str):
     return await ScheduleController.get_schedule_status(schedule_id)
 
-@router.get("/service/status")
-async def get_service_status():
-    return schedule_service.get_status()
 

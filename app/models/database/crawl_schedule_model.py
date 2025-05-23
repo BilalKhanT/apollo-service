@@ -26,22 +26,16 @@ class CrawlSchedule(Document):
     schedule_name: Optional[str] = None
     day_of_week: DayOfWeek = Field(..., description="Day of the week to run the crawl")
     time_of_day: str = Field(..., description="Time of day to run the crawl (HH:MM format)")
-    
-    # Crawl configuration
     max_links_to_scrape: Optional[int] = None
     max_pages_to_scrape: Optional[int] = None
     depth_limit: Optional[int] = None
     domain_restriction: bool = True
     scrape_pdfs_and_xls: bool = True
-    
-    # Schedule metadata
     status: ScheduleStatus = Field(default=ScheduleStatus.ACTIVE)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_run_at: Optional[datetime] = None
     next_run_at: Optional[datetime] = None
-    
-    # Execution tracking
     total_runs: int = Field(default=0)
     successful_runs: int = Field(default=0)
     failed_runs: int = Field(default=0)
@@ -52,7 +46,6 @@ class CrawlSchedule(Document):
     def validate_time_format(cls, v):
         if isinstance(v, str):
             try:
-                # Validate the time format
                 time.fromisoformat(v)
                 return v
             except ValueError:
@@ -65,23 +58,19 @@ class CrawlSchedule(Document):
             "base_url",
             "status",
             "next_run_at",
-            [("base_url", 1), ("status", 1)]  # Compound index
+            [("base_url", 1), ("status", 1)] 
         ]
     
     def update_timestamp(self):
         self.updated_at = datetime.utcnow()
     
     def get_time_object(self) -> time:
-        """Convert time_of_day string to time object"""
         return time.fromisoformat(self.time_of_day)
     
     def calculate_next_run(self) -> datetime:
-        """Calculate the next run time based on day_of_week and time_of_day"""
         from datetime import datetime, timedelta
-        
-        now = datetime.utcnow()
-        
-        # Map day names to weekday numbers (Monday=0, Sunday=6)
+
+        now = datetime.utcnow().replace(second=0, microsecond=0)
         day_mapping = {
             DayOfWeek.MONDAY: 0,
             DayOfWeek.TUESDAY: 1,
@@ -91,31 +80,25 @@ class CrawlSchedule(Document):
             DayOfWeek.SATURDAY: 5,
             DayOfWeek.SUNDAY: 6
         }
-        
         target_weekday = day_mapping[self.day_of_week]
         current_weekday = now.weekday()
-        
-        # Get the time object
         target_time = self.get_time_object()
-        
-        # Calculate days until next occurrence
         days_ahead = target_weekday - current_weekday
-        
-        # If the target day is today, check if the time has already passed
+
         if days_ahead == 0:
-            scheduled_time = datetime.combine(now.date(), target_time)
-            if scheduled_time <= now:
-                days_ahead = 7  # Schedule for next week
+            scheduled_time_today = datetime.combine(now.date(), target_time)
+            if scheduled_time_today >= now:
+                return scheduled_time_today
+            else:
+                days_ahead = 7
         elif days_ahead < 0:
-            days_ahead += 7  # Schedule for next week
-        
-        next_run = now + timedelta(days=days_ahead)
-        next_run = datetime.combine(next_run.date(), target_time)
-        
+            days_ahead += 7
+
+        next_run_date = now + timedelta(days=days_ahead)
+        next_run = datetime.combine(next_run_date.date(), target_time)
         return next_run
     
     def mark_run_started(self, task_id: str):
-        """Mark that a scheduled run has started"""
         self.last_run_at = datetime.utcnow()
         self.last_task_id = task_id
         self.total_runs += 1
@@ -123,7 +106,6 @@ class CrawlSchedule(Document):
         self.update_timestamp()
     
     def mark_run_completed(self, success: bool, error: Optional[str] = None):
-        """Mark that a scheduled run has completed"""
         if success:
             self.successful_runs += 1
             self.last_error = None
