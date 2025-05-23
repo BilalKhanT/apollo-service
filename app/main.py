@@ -48,6 +48,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include all routers
 app.include_router(crawl.router)
 app.include_router(cluster.router)
 app.include_router(scrape.router)
