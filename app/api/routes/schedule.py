@@ -32,9 +32,9 @@ async def list_schedules(
     return await ScheduleController.list_schedules(status=status, limit=limit, skip=skip)
 
 
-@router.get("/{schedule_id}", response_model=CrawlScheduleResponse)
-async def get_schedule(schedule_id: str):
-    return await ScheduleController.get_schedule(schedule_id)
+# @router.get("/{schedule_id}", response_model=CrawlScheduleResponse)
+# async def get_schedule(schedule_id: str):
+#     return await ScheduleController.get_schedule(schedule_id)
 
 @router.delete("/{schedule_id}")
 async def delete_schedule(schedule_id: str):

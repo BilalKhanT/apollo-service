@@ -1,3 +1,4 @@
+import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -6,6 +7,7 @@ from dotenv import load_dotenv
 from app.api.routes import crawl, cluster, scrape, logs, schedule
 from app.utils.database import connect_to_mongo, close_mongo_connection
 from app.services.schedule_service import schedule_service
+from app.utils.socket_manager import socket_manager
 
 load_dotenv()
 
@@ -17,21 +19,38 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting Apollo Web Crawler API...")
+    logger.info("Starting Apollo Web Crawler API with WebSocket support...")
     try:
         await connect_to_mongo()
         logger.info("Database connection established successfully")
-
         await schedule_service.start()
         logger.info("Schedule service started successfully")
+        try:
+            from app.utils.realtime_publisher import realtime_publisher
+            await realtime_publisher.start()
+            logger.info("Realtime publisher service started successfully")
+        except Exception as e:
+            logger.warning(f"Failed to start realtime publisher: {str(e)}")
+        
+        logger.info("WebSocket manager initialized successfully")
+        await socket_manager.broadcast_server_message(
+            "Apollo server started and ready to accept connections", 
+            "info"
+        )
         
     except Exception as e:
         logger.error(f"Failed to initialize services: {str(e)}")
+        raise
     
     yield
 
     logger.info("Shutting down Apollo Web Crawler API...")
     try:
+        await socket_manager.broadcast_server_message(
+            "Apollo server is shutting down", 
+            "warning"
+        )
+
         await schedule_service.stop()
         logger.info("Schedule service stopped successfully")
 
@@ -43,8 +62,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Apollo Web Crawler API",
-    description="Apollo Web Scrapper with Scheduled Crawling",
-    version="2.1.0", 
+    description="Apollo Web Scraper with Real-time WebSocket Updates and Scheduled Crawling",
+    version="2.2.0", 
     lifespan=lifespan
 )
 
@@ -60,11 +79,16 @@ app.include_router(crawl.router)
 app.include_router(cluster.router)
 app.include_router(scrape.router)
 app.include_router(logs.router)
-app.include_router(schedule.router) 
+app.include_router(schedule.router)
+
+socket_app = socketio.ASGIApp(
+    socket_manager.sio,
+    other_asgi_app=app,
+    socketio_path="/socket.io"
+)
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
     try:
         from app.utils.database import db
         if db.client:
@@ -77,14 +101,37 @@ async def health_check():
         db_status = "error"
 
     schedule_status = schedule_service.get_status()
+
+    try:
+        websocket_stats = socket_manager.get_stats()
+        websocket_status = "healthy"
+    except Exception as e:
+        logger.error(f"WebSocket health check failed: {str(e)}")
+        websocket_stats = {}
+        websocket_status = "error"
     
     return {
         "status": "healthy",
-        "database": db_status,
+        "database": {
+            "status": db_status
+        },
         "schedule_service": schedule_status,
-        "version": "2.1.0"
+        "websocket": {
+            "status": websocket_status,
+            "stats": websocket_stats
+        },
+        "version": "0.0.1",
     }
+
+app = socket_app
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0", 
+        port=8000,
+        reload=True,
+        reload_dirs=["app"],
+        log_level="info"
+    )

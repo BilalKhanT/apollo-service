@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from app.models import LogResponse
 from app.controllers.logs_controller import LogsController
 
