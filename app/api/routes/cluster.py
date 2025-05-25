@@ -1,17 +1,88 @@
-from typing import Any, Dict, List
-from fastapi import APIRouter, HTTPException, logger
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query, status
 from app.controllers.cluster_controller import ClusterController
 from app.controllers.crawl_result_controller import CrawlResultController
-from app.models.cluster_model import ClusterDetailResponse, YearDetailResponse
+from app.models.cluster_model import (
+    ClusterDetailResponse, 
+    YearDetailResponse,
+    ClustersListResponse
+)
+from app.models.base import ErrorResponse, ListResponse
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Clusters"])
 
-@router.get("/get-clusters", response_model=List[Dict[str, Any]])
-async def get_crawl_results():
+@router.get(
+    "/clusters",
+    response_model=ClustersListResponse,
+    responses={
+        200: {
+            "description": "Clusters and years retrieved successfully",
+            "model": ClustersListResponse
+        },
+        404: {
+            "description": "No crawl results found",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error", 
+            "model": ErrorResponse
+        }
+    },
+    summary="Get available clusters and years",
+    description="Retrieve all available clusters and years from crawl results for scraping and downloading."
+)
+async def get_clusters_and_years(
+    crawl_task_id: Optional[str] = Query(
+        None,
+        description="Specific crawl task ID to get clusters from (uses most recent if not specified)",
+        example="123e4567-e89b-12d3-a456-426614174000"
+    )
+) -> ClustersListResponse:
+    try:
+        result = await ClusterController.get_clusters(crawl_task_id=crawl_task_id)
+        
+        return ClustersListResponse(
+            success=True,
+            message="Clusters and years retrieved successfully",
+            **result
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting clusters and years: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve clusters and years: {str(e)}"
+        )
+
+@router.get(
+    "/get-clusters",
+    response_model=ListResponse,
+    responses={
+        200: {
+            "description": "Crawl results retrieved successfully",
+            "model": ListResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Get all crawl results with summary information",
+    description="Retrieve a list of all crawl results with cluster and year summaries."
+)
+async def get_crawl_results(
+    limit: int = Query(50, ge=1, le=100, description="Number of results to return"),
+    skip: int = Query(0, ge=0, description="Number of results to skip")
+) -> ListResponse:
     try:
         crawl_results = await CrawlResultController.list_crawl_results()
+        total_count = len(crawl_results)
+        paginated_results = crawl_results[skip:skip + limit]
         summary_results = []
-        for result in crawl_results:
+        for result in paginated_results:
             clusters_data = {}
             cluster_summary = {
                 "total_domains": 0,
@@ -69,22 +140,90 @@ async def get_crawl_results():
                 "year_summary": year_summary
             })
         
-        return summary_results
+        return ListResponse(
+            success=True,
+            message=f"Retrieved {len(summary_results)} crawl results",
+            data=summary_results,
+            total_count=total_count,
+            page=skip // limit + 1,
+            page_size=limit
+        )
         
     except Exception as e:
         logger.error(f"Error getting crawl results: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get crawl results: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get crawl results: {str(e)}"
+        )
 
-@router.get("/tasks/{task_id}/clusters/{cluster_id}", response_model=ClusterDetailResponse)
+@router.get(
+    "/tasks/{task_id}/clusters/{cluster_id}",
+    response_model=ClusterDetailResponse,
+    responses={
+        200: {
+            "description": "Cluster details retrieved successfully",
+            "model": ClusterDetailResponse
+        },
+        404: {
+            "description": "Task or cluster not found",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Get detailed cluster information",
+    description="Retrieve detailed information about a specific cluster including all URLs."
+)
 async def get_cluster_by_id(
     task_id: str,
     cluster_id: str
-):
-    return await ClusterController.get_cluster_by_id(cluster_id, task_id)
+) -> ClusterDetailResponse:
+    try:
+        cluster_details = await ClusterController.get_cluster_by_id(cluster_id, task_id)
+        return cluster_details
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting cluster {cluster_id} for task {task_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve cluster details: {str(e)}"
+        )
 
-@router.get("/tasks/{task_id}/years/{year}", response_model=YearDetailResponse)
+@router.get(
+    "/tasks/{task_id}/years/{year}",
+    response_model=YearDetailResponse,
+    responses={
+        200: {
+            "description": "Year details retrieved successfully",
+            "model": YearDetailResponse
+        },
+        404: {
+            "description": "Task or year not found",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Get detailed year information",
+    description="Retrieve detailed information about files available for a specific year."
+)
 async def get_year_by_id(
     task_id: str,
     year: str
-):
-    return await ClusterController.get_year_by_id(year, task_id)
+) -> YearDetailResponse:
+    try:
+        year_details = await ClusterController.get_year_by_id(year, task_id)
+        return year_details
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting year {year} for task {task_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve year details: {str(e)}"
+        )

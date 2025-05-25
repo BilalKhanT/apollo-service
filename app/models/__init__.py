@@ -1,46 +1,102 @@
-from .crawl_model import CrawlRequest, CrawlStatus
-from .scrape_model import ScrapingRequest, ScrapingStatus
-from .cluster_model import (
-    Cluster, 
-    DomainCluster, 
-    YearCluster, 
-    ClusterResult, 
-    ClusterDetailResponse, 
-    YearDetailResponse
+from .base import (
+    TaskStatus,
+    BaseResponse,
+    DataResponse,
+    ListResponse,
+    ErrorResponse,
+    HealthResponse
 )
-from .log_model import LogEntry, LogResponse
+from .crawl_model import (
+    CrawlRequest,
+    CrawlSummary,
+    CrawlStatus,
+    CrawlResponse,
+    CrawlStopRequest,
+    CrawlStopResponse
+)
+from .scrape_model import (
+    ScrapingRequest,
+    ScrapingProgress,
+    ScrapingSummary,
+    ScrapingStatus,
+    ScrapingResponse
+)
+from .cluster_model import (
+    Cluster,
+    DomainCluster,
+    YearCluster,
+    ClusterSummary,
+    ClusterResult,
+    ClusterDetailResponse,
+    YearDetailResponse,
+    ClustersListResponse
+)
+from .log_model import (
+    LogEntry,
+    LogResponse
+)
 from .schedule_model import (
+    DayOfWeek,
+    ScheduleStatus,
     CrawlScheduleRequest,
     CrawlScheduleResponse,
     CrawlScheduleUpdateRequest,
     ScheduleListResponse,
     ScheduleStatusResponse,
-    DayOfWeek,
-    ScheduleStatus
+    ScheduleActionResponse
 )
 from .database.crawl_result_model import CrawlResult
 from .database.crawl_schedule_model import CrawlSchedule
 
 __all__ = [
+    # Base models
+    'TaskStatus',
+    'BaseResponse',
+    'DataResponse', 
+    'ListResponse',
+    'ErrorResponse',
+    'HealthResponse',
+    
+    # Crawl models
     'CrawlRequest',
+    'CrawlSummary',
     'CrawlStatus',
-    'ClusterResult',
-    'YearCluster',
+    'CrawlResponse',
+    'CrawlStopRequest',
+    'CrawlStopResponse',
+    
+    # Scrape models
     'ScrapingRequest',
+    'ScrapingProgress',
+    'ScrapingSummary',
     'ScrapingStatus',
+    'ScrapingResponse',
+    
+    # Cluster models
     'Cluster',
     'DomainCluster',
-    'LogEntry',
-    'LogResponse',
+    'YearCluster',
+    'ClusterSummary',
+    'ClusterResult',
     'ClusterDetailResponse',
     'YearDetailResponse',
-    'CrawlResult',
-    'CrawlSchedule',
+    'ClustersListResponse',
+    
+    # Log models
+    'LogEntry',
+    'LogResponse',
+    
+    # Schedule models
+    'DayOfWeek',
+    'ScheduleStatus',
     'CrawlScheduleRequest',
     'CrawlScheduleResponse',
     'CrawlScheduleUpdateRequest',
     'ScheduleListResponse',
     'ScheduleStatusResponse',
-    'DayOfWeek',
-    'ScheduleStatus',
+    'ScheduleActionResponse',
+    
+    # Database models
+    'CrawlResult',
+    'CrawlSchedule',
 ]

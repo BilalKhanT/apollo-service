@@ -1,10 +1,10 @@
 from .config import *
-from .task_manager import TaskManager
-
-# Create our own instance here
-task_manager = TaskManager()
+from .task_manager import TaskManager, task_manager
+from .socket_manager import WebSocketManager, websocket_manager
+from .realtime_publisher import RealtimePublisher, realtime_publisher
 
 __all__ = [
+    # Config
     'CRAWLER_USER_AGENT',
     'CRAWLER_TIMEOUT',
     'CRAWLER_NUM_WORKERS',
@@ -25,5 +25,16 @@ __all__ = [
     'FILE_DOWNLOAD_DIR',
     'MAX_DOWNLOAD_WORKERS',
     'DATA_DIR',
-    'task_manager'
+    
+    # Task Management
+    'TaskManager',
+    'task_manager',
+    
+    # WebSocket Management
+    'WebSocketManager',
+    'websocket_manager',
+    
+    # Real-time Publishing
+    'RealtimePublisher',
+    'realtime_publisher'
 ]
