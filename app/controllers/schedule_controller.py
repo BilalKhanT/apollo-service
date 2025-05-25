@@ -236,3 +236,66 @@ class ScheduleController:
                 status_code=500, 
                 detail=f"Failed to get schedule status: {str(e)}"
             )
+        
+    @staticmethod
+    async def pause_schedule(schedule_id: str) -> dict:
+        """Pause a schedule (set status to PAUSED)"""
+        try:
+            schedule = await CrawlSchedule.get(schedule_id)
+            if not schedule:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Schedule {schedule_id} not found"
+                )
+            
+            if schedule.status == ScheduleStatus.PAUSED:
+                return {"message": f"Schedule {schedule_id} is already paused"}
+            
+            schedule.status = ScheduleStatus.PAUSED
+            schedule.update_timestamp()
+            await schedule.save()
+            
+            logger.info(f"Paused schedule {schedule_id} for {schedule.base_url}")
+            
+            return {"message": f"Schedule {schedule_id} paused successfully"}
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error pausing schedule {schedule_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to pause schedule: {str(e)}"
+            )
+
+    @staticmethod
+    async def resume_schedule(schedule_id: str) -> dict:
+        """Resume a paused schedule (set status to ACTIVE)"""
+        try:
+            schedule = await CrawlSchedule.get(schedule_id)
+            if not schedule:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Schedule {schedule_id} not found"
+                )
+            
+            if schedule.status == ScheduleStatus.ACTIVE:
+                return {"message": f"Schedule {schedule_id} is already active"}
+            
+            schedule.status = ScheduleStatus.ACTIVE
+            schedule.next_run_at = schedule.calculate_next_run()
+            schedule.update_timestamp()
+            await schedule.save()
+            
+            logger.info(f"Resumed schedule {schedule_id} for {schedule.base_url}")
+            
+            return {"message": f"Schedule {schedule_id} resumed successfully"}
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error resuming schedule {schedule_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to resume schedule: {str(e)}"
+            )

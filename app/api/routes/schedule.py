@@ -31,18 +31,19 @@ async def list_schedules(
     """List all crawl schedules with optional filtering and pagination."""
     return await ScheduleController.list_schedules(status=status, limit=limit, skip=skip)
 
-
-# @router.get("/{schedule_id}", response_model=CrawlScheduleResponse)
-# async def get_schedule(schedule_id: str):
-#     return await ScheduleController.get_schedule(schedule_id)
-
 @router.delete("/{schedule_id}")
 async def delete_schedule(schedule_id: str):
     return await ScheduleController.delete_schedule(schedule_id)
 
+@router.post("/{schedule_id}/pause")
+async def pause_schedule(schedule_id: str):
+    """Pause a schedule (stops it from executing but keeps it in the database)"""
+    return await ScheduleController.pause_schedule(schedule_id)
 
-@router.get("/{schedule_id}/status", response_model=ScheduleStatusResponse)
-async def get_schedule_status(schedule_id: str):
-    return await ScheduleController.get_schedule_status(schedule_id)
+
+@router.post("/{schedule_id}/resume")
+async def resume_schedule(schedule_id: str):
+    """Resume a paused schedule"""
+    return await ScheduleController.resume_schedule(schedule_id)
 
 
