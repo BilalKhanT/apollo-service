@@ -1,6 +1,6 @@
 from .config import *
 from .task_manager import TaskManager, task_manager
-from .socket_manager import WebSocketManager, websocket_manager
+from .socket_manager import SocketManager, socket_manager
 from .realtime_publisher import RealtimePublisher, realtime_publisher
 
 __all__ = [
@@ -31,8 +31,8 @@ __all__ = [
     'task_manager',
     
     # WebSocket Management
-    'WebSocketManager',
-    'websocket_manager',
+    'SocketManager',
+    'socket_manager',
     
     # Real-time Publishing
     'RealtimePublisher',
