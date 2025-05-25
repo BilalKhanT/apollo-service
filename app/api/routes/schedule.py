@@ -1,3 +1,4 @@
+from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Query, status
 from typing import Optional
 import logging
@@ -95,7 +96,17 @@ async def list_schedules(
     )
 ) -> ScheduleListResponse:
     try:
-        return await ScheduleController.list_schedules(status=status, limit=limit, skip=skip)
+        response = await ScheduleController.list_schedules(status=status, limit=limit, skip=skip)
+        karachi_offset = timedelta(hours=5)
+        if hasattr(response, 'schedules') and response.schedules:
+            for schedule in response.schedules:
+                if hasattr(schedule, 'last_run_at') and schedule.last_run_at:
+                    schedule.last_run_at = schedule.last_run_at + karachi_offset
+
+                if hasattr(schedule, 'next_run_at') and schedule.next_run_at:
+                    schedule.next_run_at = schedule.next_run_at + karachi_offset
+
+        return response
     except Exception as e:
         logger.error(f"Error listing schedules: {str(e)}")
         raise HTTPException(
