@@ -84,7 +84,7 @@ async def connect_to_mongo():
                 CrawlResult,
                 CrawlSchedule,
                 DealResult,
-                # DealScrapeSchedule,
+                DealScrapeSchedule,
             ]
         )
 

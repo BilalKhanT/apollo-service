@@ -4,9 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from app.api.routes import crawl, cluster, scrape, logs, schedule, deal
+from app.api.routes import crawl, cluster, scrape, logs, schedule, deal, deal_schedule
 from app.utils.database import connect_to_mongo, close_mongo_connection
 from app.services.schedule_service import schedule_service
+from app.services.restaurant_deal.deal_schedule_service import deal_schedule_service
 from app.utils.socket_manager import socket_manager
 
 load_dotenv()
@@ -25,6 +26,8 @@ async def lifespan(app: FastAPI):
         logger.info("Database connection established successfully")
         await schedule_service.start()
         logger.info("Schedule service started successfully")
+        await deal_schedule_service.start()
+        logger.info("Deal schedule service started successfully")
         try:
             from app.utils.realtime_publisher import realtime_publisher
             await realtime_publisher.start()
@@ -54,6 +57,9 @@ async def lifespan(app: FastAPI):
         await schedule_service.stop()
         logger.info("Schedule service stopped successfully")
 
+        await deal_schedule_service.stop()
+        logger.info("Deal schedule service stopped successfully")
+
         await close_mongo_connection()
         logger.info("Database connection closed successfully")
         
@@ -81,6 +87,7 @@ app.include_router(scrape.router)
 app.include_router(logs.router)
 app.include_router(schedule.router)
 app.include_router(deal.router)
+app.include_router(deal_schedule.router)  # Added deal schedule router
 
 socket_app = socketio.ASGIApp(
     socket_manager.sio,
@@ -102,6 +109,7 @@ async def health_check():
         db_status = "error"
 
     schedule_status = schedule_service.get_status()
+    deal_schedule_status = deal_schedule_service.get_status()
 
     try:
         websocket_stats = socket_manager.get_stats()
@@ -117,6 +125,7 @@ async def health_check():
             "status": db_status
         },
         "schedule_service": schedule_status,
+        "deal_schedule_service": deal_schedule_status,
         "websocket": {
             "status": websocket_status,
             "stats": websocket_stats

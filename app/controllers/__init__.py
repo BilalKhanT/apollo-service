@@ -5,6 +5,7 @@ from .logs_controller import LogsController
 from .crawl_result_controller import CrawlResultController
 from .schedule_controller import ScheduleController
 from .restaurant_deal.deal_scrape_controller import DealScrapeController
+from .restaurant_deal.deal_schedule_controller import DealScheduleController
 
 __all__ = [
     'CrawlController',
@@ -14,4 +15,5 @@ __all__ = [
     'CrawlResultController',
     'ScheduleController',
     'DealScrapeController',
+    'DealScheduleController',
 ]
