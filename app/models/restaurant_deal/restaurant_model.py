@@ -4,34 +4,29 @@ from datetime import datetime
 from app.models.base import BaseResponse
 
 
-class RestaurantScrapingRequest(BaseModel):
+class DealScrapingRequest(BaseModel):
     cities: List[str] = Field(
-        description="List of cities to scrape restaurants from",
-        example=["Karachi", "Lahore", "Islamabad"],
-        min_items=1
+        default_factory=list,
+        description="List of cities to scrape restaurants from. If empty, backend will fetch cities via API.",
+        example=["Karachi", "Lahore", "Islamabad"]
     )
-    
-    @validator('cities')
-    def validate_cities(cls, v):
-        if not v:
-            raise ValueError('At least one city must be provided')
-        
-        # Remove duplicates and empty strings
-        cleaned_cities = list(set(city.strip() for city in v if city.strip()))
-        if not cleaned_cities:
-            raise ValueError('At least one valid city must be provided')
-        
+
+    @validator('cities', pre=True)
+    def clean_cities(cls, v):
+        if v is None:
+            return []
+
+        cleaned_cities = list(set(city.strip() for city in v if city and city.strip()))
         return cleaned_cities
-    
+
     class Config:
         json_schema_extra = {
             "example": {
-                "cities": ["Karachi", "Lahore", "Islamabad"]
+                "cities": []
             }
         }
 
-
-class RestaurantScrapingResponse(BaseResponse):
+class DealScrapingResponse(BaseResponse):
     task_id: str = Field(description="Unique task identifier for tracking")
     cities_requested: List[str] = Field(description="Cities that were requested for scraping")
     
@@ -47,7 +42,7 @@ class RestaurantScrapingResponse(BaseResponse):
         }
 
 
-class RestaurantResultSummary(BaseModel):
+class DealResultSummary(BaseModel):
     task_id: str = Field(description="Task identifier")
     cities_requested: List[str] = Field(description="Cities that were requested")
     cities_processed: int = Field(description="Number of cities successfully processed")
@@ -83,8 +78,8 @@ class RestaurantResultSummary(BaseModel):
         }
 
 
-class RestaurantResultsResponse(BaseResponse):
-    data: List[RestaurantResultSummary] = Field(description="List of restaurant scraping results")
+class DealResultsResponse(BaseResponse):
+    data: List[DealResultSummary] = Field(description="List of restaurant scraping results")
     total_count: int = Field(description="Total number of results available")
     page: int = Field(description="Current page number")
     page_size: int = Field(description="Number of results per page")
@@ -114,7 +109,7 @@ class RestaurantResultsResponse(BaseResponse):
         }
 
 
-class RestaurantStopResponse(BaseResponse):
+class DealStopResponse(BaseResponse):
     task_id: str = Field(description="ID of the task that was stopped")
     was_running: bool = Field(description="Whether the task was actually running when stopped")
     cleanup_completed: bool = Field(description="Whether cleanup was completed successfully")

@@ -46,15 +46,15 @@ from .schedule_model import (
     ScheduleActionResponse
 )
 from .restaurant_deal.restaurant_model import (
-    RestaurantScrapingRequest,
-    RestaurantScrapingResponse,
-    RestaurantResultsResponse,
-    RestaurantStopResponse,
-    RestaurantResultSummary
+    DealScrapingRequest,
+    DealScrapingResponse,
+    DealResultsResponse,
+    DealStopResponse,
+    DealResultSummary
 )
 from .database.crawl_result_model import CrawlResult
 from .database.crawl_schedule_model import CrawlSchedule
-from .database.restaurant_deal.restaurant_result_model import RestaurantResult
+from .database.restaurant_deal.restaurant_result_model import DealResult
 
 __all__ = [
     # Base models
@@ -107,14 +107,12 @@ __all__ = [
     # Database models
     'CrawlResult',
     'CrawlSchedule',
-    'RestaurantResult',
+    'DealResult',
 
     # Restaurant Deal models
-    'RestaurantScrapingRequest',
-    'RestaurantScrapingResponse',
-    'RestaurantResultsResponse',
-    'RestaurantStopResponse',
-    'RestaurantResultSummary',
-    'RestaurantResult',
-    'RestaurantData',
+    'DealScrapingRequest',
+    'DealScrapingResponse',
+    'DealResultsResponse',
+    'DealStopResponse',
+    'DealResultSummary',
 ]

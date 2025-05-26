@@ -75,12 +75,16 @@ async def connect_to_mongo():
         # Import all models
         from app.models.database.crawl_result_model import CrawlResult
         from app.models.database.crawl_schedule_model import CrawlSchedule
+        from app.models.database.restaurant_deal.restaurant_result_model import DealResult
+        from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
 
         await init_beanie(
             database=db.database,
             document_models=[
                 CrawlResult,
-                CrawlSchedule,  # Add the new schedule model
+                CrawlSchedule,
+                DealResult,
+                DealScrapeSchedule,
             ]
         )
 

@@ -15,7 +15,7 @@ class RestaurantData(BaseModel):
     scraped_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class RestaurantResult(Document):
+class DealResult(Document):
     task_id: str = Field(..., unique=True, index=True)
     cities_requested: List[str] = Field(description="Cities that were requested for scraping")
     cities_processed: int = Field(description="Number of cities successfully processed")
