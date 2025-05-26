@@ -63,6 +63,10 @@ class RealtimePublisher:
             task_id: ID of the task to publish updates for
             interval: Update interval in seconds
         """
+        if not task_id:
+            logger.warning("Cannot start publishing for empty task_id")
+            return
+            
         if task_id in self.publishing_tasks:
             logger.debug(f"Task {task_id} is already being published")
             return
@@ -78,22 +82,39 @@ class RealtimePublisher:
             logger.debug(f"Task {task_id} is already completed, not starting publisher")
             return
         
-        self.task_intervals[task_id] = interval
-        self.publishing_tasks[task_id] = asyncio.create_task(
-            self._publish_loop(task_id, interval)
-        )
-        logger.info(f"Started real-time publishing for task {task_id} (interval: {interval}s)")
+        try:
+            self.task_intervals[task_id] = interval
+            self.publishing_tasks[task_id] = asyncio.create_task(
+                self._publish_loop(task_id, interval)
+            )
+            logger.info(f"Started real-time publishing for task {task_id} (interval: {interval}s)")
+        except Exception as e:
+            logger.error(f"Error starting publishing for task {task_id}: {str(e)}")
+            # Clean up if task creation failed
+            if task_id in self.task_intervals:
+                del self.task_intervals[task_id]
     
     async def stop_publishing(self, task_id: str):
         """Stop real-time publishing for a task"""
+        if not task_id:
+            logger.warning("Cannot stop publishing for empty task_id")
+            return
+            
         if task_id in self.publishing_tasks:
-            task = self.publishing_tasks[task_id]
-            task.cancel()
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            del self.publishing_tasks[task_id]
+                task = self.publishing_tasks[task_id]
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                del self.publishing_tasks[task_id]
+            except Exception as e:
+                logger.error(f"Error stopping publishing task for {task_id}: {str(e)}")
+                # Still try to clean up the dictionary entry
+                if task_id in self.publishing_tasks:
+                    del self.publishing_tasks[task_id]
             
         if task_id in self.task_intervals:
             del self.task_intervals[task_id]
@@ -123,15 +144,24 @@ class RealtimePublisher:
                     logger.info(f"Task {task_id} completed with status '{current_status}', stopping publisher")
                     
                     # Send final status update
-                    await socket_manager.emit_task_status(task_id, task_status)
+                    try:
+                        await socket_manager.emit_task_status(task_id, task_status)
+                    except Exception as e:
+                        logger.error(f"Error sending final status for task {task_id}: {str(e)}")
                     
                     # Send completion notification
-                    await socket_manager.emit_task_completion(task_id, task_status)
+                    try:
+                        await socket_manager.emit_task_completion(task_id, task_status)
+                    except Exception as e:
+                        logger.error(f"Error sending completion notification for task {task_id}: {str(e)}")
                     
                     # Send any remaining logs
-                    remaining_logs = task_manager.get_and_clear_logs(task_id)
-                    if remaining_logs:
-                        await socket_manager.emit_task_logs(task_id, remaining_logs)
+                    try:
+                        remaining_logs = task_manager.get_and_clear_logs(task_id)
+                        if remaining_logs:
+                            await socket_manager.emit_task_logs(task_id, remaining_logs)
+                    except Exception as e:
+                        logger.error(f"Error sending final logs for task {task_id}: {str(e)}")
                     
                     break
                 
@@ -143,13 +173,19 @@ class RealtimePublisher:
                     consecutive_same_status += 1
                 
                 # Always send status updates for active tasks
-                await socket_manager.emit_task_status(task_id, task_status)
+                try:
+                    await socket_manager.emit_task_status(task_id, task_status)
+                except Exception as e:
+                    logger.error(f"Error sending status update for task {task_id}: {str(e)}")
                 
                 # Get and send new logs
-                logs = task_manager.get_and_clear_logs(task_id)
-                if logs:
-                    await socket_manager.emit_task_logs(task_id, logs)
-                    last_log_count = len(logs)
+                try:
+                    logs = task_manager.get_and_clear_logs(task_id)
+                    if logs:
+                        await socket_manager.emit_task_logs(task_id, logs)
+                        last_log_count = len(logs)
+                except Exception as e:
+                    logger.error(f"Error sending logs for task {task_id}: {str(e)}")
                 
                 # Dynamic interval adjustment
                 actual_interval = interval
@@ -173,10 +209,13 @@ class RealtimePublisher:
             logger.error(f"Error in publishing loop for task {task_id}: {str(e)}")
         finally:
             # Clean up
-            if task_id in self.publishing_tasks:
-                del self.publishing_tasks[task_id]
-            if task_id in self.task_intervals:
-                del self.task_intervals[task_id]
+            try:
+                if task_id in self.publishing_tasks:
+                    del self.publishing_tasks[task_id]
+                if task_id in self.task_intervals:
+                    del self.task_intervals[task_id]
+            except Exception as e:
+                logger.error(f"Error cleaning up publishing resources for task {task_id}: {str(e)}")
             logger.debug(f"Publish loop ended for task {task_id}")
     
     async def _cleanup_loop(self):
@@ -198,13 +237,20 @@ class RealtimePublisher:
             # Clean up publishers for completed tasks
             tasks_to_stop = []
             for task_id in list(self.publishing_tasks.keys()):
-                task_status = task_manager.get_task_status(task_id)
-                if not task_status or task_status.get('status') in ['completed', 'failed', 'stopped', 'error']:
-                    tasks_to_stop.append(task_id)
+                try:
+                    task_status = task_manager.get_task_status(task_id)
+                    if not task_status or task_status.get('status') in ['completed', 'failed', 'stopped', 'error']:
+                        tasks_to_stop.append(task_id)
+                except Exception as e:
+                    logger.error(f"Error checking task status for {task_id} during cleanup: {str(e)}")
+                    tasks_to_stop.append(task_id)  # Remove problematic tasks
             
             for task_id in tasks_to_stop:
-                await self.stop_publishing(task_id)
-                logger.debug(f"Cleaned up publisher for completed task {task_id}")
+                try:
+                    await self.stop_publishing(task_id)
+                    logger.debug(f"Cleaned up publisher for completed task {task_id}")
+                except Exception as e:
+                    logger.error(f"Error stopping publisher for task {task_id} during cleanup: {str(e)}")
             
             # Log stats
             if tasks_to_stop:
@@ -220,10 +266,13 @@ class RealtimePublisher:
         # Count publishers by task type
         type_counts = {}
         for task_id in self.publishing_tasks:
-            task_status = task_manager.get_task_status(task_id)
-            if task_status:
-                task_type = task_status.get('type', 'unknown')
-                type_counts[task_type] = type_counts.get(task_type, 0) + 1
+            try:
+                task_status = task_manager.get_task_status(task_id)
+                if task_status:
+                    task_type = task_status.get('type', 'unknown')
+                    type_counts[task_type] = type_counts.get(task_type, 0) + 1
+            except Exception as e:
+                logger.error(f"Error getting task type for {task_id}: {str(e)}")
         
         return {
             "running": self.running,
@@ -235,10 +284,16 @@ class RealtimePublisher:
     
     def is_publishing(self, task_id: str) -> bool:
         """Check if a task is currently being published"""
-        return task_id in self.publishing_tasks
+        if not task_id:
+            return False
+        return task_id in self.publishing_tasks and not self.publishing_tasks[task_id].done()
     
     async def force_update(self, task_id: str):
         """Force an immediate update for a specific task"""
+        if not task_id:
+            logger.warning("Cannot force update for empty task_id")
+            return False
+            
         try:
             task_status = task_manager.get_task_status(task_id)
             if task_status:

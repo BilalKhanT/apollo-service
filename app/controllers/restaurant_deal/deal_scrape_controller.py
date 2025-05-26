@@ -160,6 +160,12 @@ class DealScrapeController:
             DealStopResponse with stop result information
         """
         try:
+            if not task_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Task ID is required"
+                )
+                
             task_status = task_manager.get_task_status(task_id)
             
             if not task_status:
@@ -189,12 +195,33 @@ class DealScrapeController:
             
             # Stop real-time publishing first
             try:
-                await realtime_publisher.stop_publishing(task_id)
-                logger.info(f"Stopped real-time publishing for deal scraping task {task_id}")
+                # Check if publisher is actually running for this task
+                if realtime_publisher.is_publishing(task_id):
+                    await realtime_publisher.stop_publishing(task_id)
+                    logger.info(f"Stopped real-time publishing for deal scraping task {task_id}")
+                else:
+                    logger.debug(f"Real-time publishing was not active for task {task_id}")
             except Exception as e:
                 logger.warning(f"Failed to stop real-time publishing for task {task_id}: {str(e)}")
+                # Don't fail the entire stop operation if publishing stop fails
             
-            # Update task status to stopped
+            # Use the orchestrator to stop the actual deal scraping process
+            try:
+                from app.utils.orchestrator import orchestrator
+                stop_result = orchestrator.stop_deal_scraping(task_id)
+                
+                if stop_result.get("success"):
+                    logger.info(f"Deal scraping task {task_id} stopped successfully via orchestrator")
+                    cleanup_completed = stop_result.get("cleanup_completed", False)
+                else:
+                    logger.warning(f"Orchestrator reported failure stopping task {task_id}: {stop_result.get('message')}")
+                    # Still mark as stopped in task manager for consistency
+                    cleanup_completed = False
+            except Exception as e:
+                logger.error(f"Error calling orchestrator stop for task {task_id}: {str(e)}")
+                cleanup_completed = False
+            
+            # Always update task status to stopped to ensure consistency
             task_manager.update_task_status(
                 task_id,
                 status="stopped",
@@ -206,9 +233,6 @@ class DealScrapeController:
                 }
             )
             
-            # The orchestrator will handle the actual stopping of the service
-            # through the stop_event mechanism in DealScrapperService
-            
             logger.info(f"Deal scraping task {task_id} marked as stopped")
             
             return DealStopResponse(
@@ -216,7 +240,7 @@ class DealScrapeController:
                 message="Deal scraping task stopped successfully",
                 task_id=task_id,
                 was_running=was_running,
-                cleanup_completed=True
+                cleanup_completed=cleanup_completed
             )
             
         except HTTPException:

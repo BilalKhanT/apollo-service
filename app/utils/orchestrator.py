@@ -1463,6 +1463,7 @@ class ApolloOrchestrator:
                     else:
                         loop.run_until_complete(realtime_publisher.stop_publishing(task_id))
                 except RuntimeError:
+                    # No event loop running, create a new one for this operation
                     asyncio.run(realtime_publisher.stop_publishing(task_id))
                     
                 self.publish_log(task_id, "Stopped real-time publishing for task", "info")

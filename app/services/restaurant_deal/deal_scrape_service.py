@@ -87,10 +87,31 @@ class DealScrapperService:
         # For callback function
         self.progress_callback = None
         
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
+        # Create output directory structure
+        self._create_directory_structure()
         
         self.logger.info(f"DealScrapperService initialized with output_dir={output_dir}, max_workers={max_workers}")
+    
+    def _create_directory_structure(self):
+        """Create the complete directory structure for deal outputs."""
+        try:
+            # Create main output directory
+            os.makedirs(self.output_dir, exist_ok=True)
+            
+            # Create subdirectories for better organization
+            subdirs = [
+                "markdown_files",
+                "json_data", 
+                "city_summaries"
+            ]
+            
+            for subdir in subdirs:
+                os.makedirs(os.path.join(self.output_dir, subdir), exist_ok=True)
+            
+            self.logger.info(f"Created directory structure in {self.output_dir}")
+            
+        except Exception as e:
+            self.logger.error(f"Error creating directory structure: {str(e)}")
     
     def _setup_logger(self):
         """Set up logging configuration."""
@@ -134,20 +155,36 @@ class DealScrapperService:
         Args:
             force: Force publish even if interval conditions not met
         """
+        # Calculate progress more granularly (5-95% during processing)
+        if self.total_cities > 0:
+            # Base progress from cities completed
+            base_progress = (self.cities_processed / self.total_cities) * 85.0
+            
+            # Add partial progress from current city's restaurants
+            if self.cities_processed < self.total_cities:
+                # Get estimated restaurants per city (default to 12 if we don't have data yet)
+                estimated_restaurants_per_city = 12
+                if self.cities_processed > 0:
+                    estimated_restaurants_per_city = max(1, self.restaurants_processed // max(1, self.cities_processed))
+                
+                # Calculate partial progress for current city
+                current_city_restaurants = self.restaurants_processed - (self.cities_processed * estimated_restaurants_per_city)
+                if current_city_restaurants > 0:
+                    partial_city_progress = min(1.0, current_city_restaurants / estimated_restaurants_per_city)
+                    partial_progress = (partial_city_progress / self.total_cities) * 85.0
+                    base_progress += partial_progress
+            
+            self.progress = 5.0 + min(85.0, base_progress)
+        
         # Only publish if we meet the update interval or force is True
         should_update = (
             force or 
-            (self.cities_processed % self.progress_update_interval == 0) or
-            (self.restaurants_processed % (self.progress_update_interval * 5) == 0)
+            (self.cities_processed % max(1, self.progress_update_interval // 5) == 0) or
+            (self.restaurants_processed % self.progress_update_interval == 0)
         )
         
         if not should_update:
             return
-        
-        # Calculate progress (5-95% during processing)
-        if self.total_cities > 0:
-            city_progress = (self.cities_processed / self.total_cities) * 90.0
-            self.progress = 5.0 + city_progress
         
         # Build progress info dictionary
         progress_info = {
@@ -187,8 +224,8 @@ class DealScrapperService:
                     }
                 )
                 
-                # Add log entry for significant progress milestones
-                if (self.cities_processed % 5 == 0 or force) and self.task_manager:
+                # Add log entry for progress milestones
+                if (self.restaurants_processed % (self.progress_update_interval * 2) == 0 or force) and self.task_manager:
                     task_manager.publish_log(
                         self.task_id,
                         f"Deal scraping progress: {self.cities_processed}/{self.total_cities} cities processed, "
@@ -207,7 +244,7 @@ class DealScrapperService:
                 self.logger.warning(f"Error in progress callback: {str(e)}")
         
         # Always log progress for significant milestones or on force
-        if self.cities_processed % 5 == 0 or force:
+        if self.restaurants_processed % (self.progress_update_interval * 2) == 0 or force:
             self.logger.info(
                 f"Progress: {self.cities_processed}/{self.total_cities} cities processed, "
                 f"{self.restaurants_processed} restaurants, {self.deals_found} deals found, "
@@ -216,10 +253,13 @@ class DealScrapperService:
     
     def sanitize_filename(self, name: str) -> str:
         """Convert a string to a safe filename."""
-        return name.replace('/', '-').replace('\\', '-').replace(' ', '-')
+        return name.replace('/', '-').replace('\\', '-').replace(' ', '-').replace(':', '-').replace('?', '')
     
     def fetch_cities(self) -> List[str]:
         """Fetch available cities from the API."""
+        if self.stop_event.is_set():
+            return []
+            
         self.logger.info("Fetching available cities...")
 
         data = {
@@ -400,30 +440,35 @@ class DealScrapperService:
             city: City name
             restaurants_deals: Dictionary mapping restaurant names to their deals
         """
-        file_path = os.path.join(self.output_dir, f"{self.sanitize_filename(city)}_deals.md")
+        # Save to the markdown_files subdirectory
+        markdown_dir = os.path.join(self.output_dir, "markdown_files")
+        file_path = os.path.join(markdown_dir, f"{self.sanitize_filename(city)}_deals.md")
 
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(f"# Restaurant Deals in {city}\n\n")
-            f.write(f"*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*\n\n")
+            f.write(f"*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')} (PKT)*\n\n")
 
             # Check if any restaurants have deals
-            if not restaurants_deals:
+            restaurants_with_deals = {k: v for k, v in restaurants_deals.items() if v}
+            
+            if not restaurants_with_deals:
                 f.write("No restaurant deals found for this city.\n")
                 return
 
+            # Summary statistics
+            total_restaurants = len(restaurants_with_deals)
+            total_deals = sum(len(deals) for deals in restaurants_with_deals.values())
+            f.write(f"**Summary:** {total_deals} deals found across {total_restaurants} restaurants\n\n")
+
             # Table of contents
             f.write("## Table of Contents\n\n")
-            for restaurant_name in restaurants_deals.keys():
-                if restaurants_deals[restaurant_name]:  # Only add restaurants with deals
-                    anchor = restaurant_name.lower().replace(' ', '-')
-                    f.write(f"- [{restaurant_name}](#{anchor})\n")
+            for restaurant_name in restaurants_with_deals.keys():
+                anchor = restaurant_name.lower().replace(' ', '-').replace('&', 'and')
+                f.write(f"- [{restaurant_name}](#{anchor}) ({len(restaurants_with_deals[restaurant_name])} deals)\n")
             f.write("\n---\n\n")
 
             # Write all restaurant deals
-            for restaurant_name, deals in restaurants_deals.items():
-                if not deals:  # Skip restaurants with no deals
-                    continue
-
+            for restaurant_name, deals in restaurants_with_deals.items():
                 f.write(f"## {restaurant_name}\n\n")
 
                 for i, deal in enumerate(deals, 1):
@@ -432,14 +477,41 @@ class DealScrapperService:
                     f.write(f"- **Start Date:** {deal['startDate']}\n")
                     f.write(f"- **End Date:** {deal['endDate']}\n")
                     f.write(f"- **Powered By:** {deal['poweredBy']}\n")
-                    f.write(f"- **Percentage Value:** {deal['percentageValue']}\n")
+                    if deal['percentageValue']:
+                        f.write(f"- **Discount:** {deal['percentageValue']}%\n")
                     f.write(f"- **Description:** {deal['description']}\n")
-                    f.write(f"- **Redeemable:** {deal['isRedeemable']}\n")
-                    f.write(f"- **Target Branches:** {', '.join(deal['targetBranches'])}\n")
-                    f.write(f"- **Associations:** {', '.join(deal['associations'])}\n")
+                    f.write(f"- **Redeemable:** {'Yes' if deal['isRedeemable'] else 'No'}\n")
+                    if deal['targetBranches']:
+                        f.write(f"- **Target Branches:** {', '.join(deal['targetBranches'])}\n")
+                    if deal['associations']:
+                        f.write(f"- **Associations:** {', '.join(deal['associations'])}\n")
                     f.write("\n---\n\n")
         
         self.logger.debug(f"Saved deals for {city} to {file_path}")
+    
+    def write_city_json(self, city: str, restaurants_deals: Dict[str, List[Dict[str, Any]]]) -> None:
+        """
+        Write city data as JSON for further processing.
+        
+        Args:
+            city: City name
+            restaurants_deals: Dictionary mapping restaurant names to their deals
+        """
+        json_dir = os.path.join(self.output_dir, "json_data")
+        file_path = os.path.join(json_dir, f"{self.sanitize_filename(city)}_data.json")
+        
+        city_data = {
+            "city": city,
+            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
+            "total_restaurants": len(restaurants_deals),
+            "total_deals": sum(len(deals) for deals in restaurants_deals.values()),
+            "restaurants": restaurants_deals
+        }
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(city_data, f, indent=2, ensure_ascii=False)
+        
+        self.logger.debug(f"Saved JSON data for {city} to {file_path}")
     
     def process_city(self, city: str) -> Dict[str, Any]:
         """
@@ -465,9 +537,10 @@ class DealScrapperService:
                 result["error"] = "Task was stopped"
                 return result
             
-            # Update current city
+            # Update current city and increment counter immediately
             with self.counter_lock:
                 self.current_city = city
+                # Don't increment cities_processed here - do it when we start processing
                 self.publish_progress()
             
             # Fetch restaurants for this city
@@ -476,6 +549,10 @@ class DealScrapperService:
             
             if not restaurants:
                 self.logger.warning(f"No restaurants found for {city}")
+                # Still count this as a processed city even if no restaurants
+                with self.counter_lock:
+                    self.cities_processed += 1
+                    self.publish_progress()
                 return result
             
             # Initialize city deals dictionary
@@ -502,14 +579,11 @@ class DealScrapperService:
                 city_restaurants_deals[restaurant_name] = deals
                 city_deals_count += len(deals)
                 
-                # Update counters
+                # Update counters and publish progress more frequently
                 with self.counter_lock:
                     self.restaurants_processed += 1
                     self.deals_found += len(deals)
-                    
-                    # Publish progress periodically
-                    if self.restaurants_processed % 10 == 0:
-                        self.publish_progress()
+                    self.publish_progress()  # Publish after each restaurant
                 
                 # Store deals in memory
                 if city not in self.deals_by_restaurant:
@@ -519,9 +593,15 @@ class DealScrapperService:
                 # Add delay to prevent overwhelming the API
                 time.sleep(self.request_delay)
             
-            # Write all deals for this city to a single markdown file
+            # Write files for this city
             if not self.stop_event.is_set():
                 self.write_city_markdown(city, city_restaurants_deals)
+                self.write_city_json(city, city_restaurants_deals)
+            
+            # Update city processed counter
+            with self.counter_lock:
+                self.cities_processed += 1
+                self.publish_progress()
             
             # Update result
             result["restaurants_processed"] = len(restaurants)
@@ -623,15 +703,14 @@ class DealScrapperService:
                     
                 city_result = self.process_city(city)
                 
-                # Update counters
-                with self.counter_lock:
-                    self.cities_processed += 1
-                    self.publish_progress()
-                
                 if not city_result["success"]:
                     self.logger.error(f"Failed to process city {city}: {city_result['error']}")
             
-            # Step 3: Finalize
+            # Step 3: Create summary files
+            if not self.stop_event.is_set():
+                self._create_summary_files()
+            
+            # Step 4: Finalize
             if self.stop_event.is_set():
                 self.status = "stopped"
                 self.progress = 95.0
@@ -681,10 +760,68 @@ class DealScrapperService:
                 "execution_time_seconds": time.time() - self.start_time
             }
     
+    def _create_summary_files(self):
+        """Create summary files for the complete scraping session."""
+        try:
+            summary_dir = os.path.join(self.output_dir, "city_summaries")
+            
+            # Create overall summary
+            overall_summary = {
+                "scraping_session": {
+                    "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
+                    "total_cities": self.total_cities,
+                    "cities_processed": self.cities_processed,
+                    "total_restaurants": self.restaurants_processed,
+                    "total_deals": self.deals_found,
+                    "execution_time_seconds": time.time() - self.start_time
+                },
+                "city_breakdown": {}
+            }
+            
+            # Add breakdown by city
+            for city, restaurants in self.deals_by_restaurant.items():
+                city_deals = sum(len(deals) for deals in restaurants.values())
+                overall_summary["city_breakdown"][city] = {
+                    "restaurants": len(restaurants),
+                    "deals": city_deals
+                }
+            
+            # Write overall summary JSON
+            summary_file = os.path.join(summary_dir, "overall_summary.json")
+            with open(summary_file, 'w', encoding='utf-8') as f:
+                json.dump(overall_summary, f, indent=2, ensure_ascii=False)
+            
+            # Write overall summary markdown
+            summary_md = os.path.join(summary_dir, "overall_summary.md")
+            with open(summary_md, 'w', encoding='utf-8') as f:
+                f.write("# Deal Scraping Session Summary\n\n")
+                f.write(f"**Completed at:** {time.strftime('%Y-%m-%d %H:%M:%S')} (PKT)\n\n")
+                f.write(f"## Overall Statistics\n\n")
+                f.write(f"- **Cities Processed:** {self.cities_processed}/{self.total_cities}\n")
+                f.write(f"- **Total Restaurants:** {self.restaurants_processed}\n")
+                f.write(f"- **Total Deals Found:** {self.deals_found}\n")
+                f.write(f"- **Execution Time:** {(time.time() - self.start_time):.2f} seconds\n\n")
+                
+                f.write("## City Breakdown\n\n")
+                f.write("| City | Restaurants | Deals |\n")
+                f.write("|------|-------------|-------|\n")
+                
+                for city, breakdown in overall_summary["city_breakdown"].items():
+                    f.write(f"| {city} | {breakdown['restaurants']} | {breakdown['deals']} |\n")
+            
+            self.logger.info(f"Created summary files in {summary_dir}")
+            
+        except Exception as e:
+            self.logger.error(f"Error creating summary files: {str(e)}")
+    
     def stop(self) -> bool:
         """Stop the deal scraping process gracefully."""
         self.logger.info("Stopping deal scraping process...")
         self.stop_event.set()
+        
+        # Wait a moment for current operations to finish
+        time.sleep(1)
+        
         return True
     
     def get_status(self) -> Dict[str, Any]:
