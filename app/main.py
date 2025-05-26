@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from app.api.routes import crawl, cluster, scrape, logs, schedule
+from app.api.routes import crawl, cluster, scrape, logs, schedule, restaurant_deal
 from app.utils.database import connect_to_mongo, close_mongo_connection
 from app.services.schedule_service import schedule_service
 from app.utils.socket_manager import socket_manager
@@ -62,8 +62,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Apollo Web Crawler API",
-    description="Apollo Web Scraper with Real-time WebSocket Updates and Scheduled Crawling",
-    version="2.2.0", 
+    description="Apollo Web Scraper with Real-time WebSocket Updates, Scheduled Crawling, and Restaurant Deals Scraping",
+    version="2.3.0",  # Updated version to reflect new restaurant functionality
     lifespan=lifespan
 )
 
@@ -75,11 +75,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include all route modules
 app.include_router(crawl.router)
 app.include_router(cluster.router)
 app.include_router(scrape.router)
 app.include_router(logs.router)
 app.include_router(schedule.router)
+app.include_router(restaurant_deal.router)  # Add the new restaurant routes
 
 socket_app = socketio.ASGIApp(
     socket_manager.sio,
@@ -110,6 +112,16 @@ async def health_check():
         websocket_stats = {}
         websocket_status = "error"
     
+    # Add restaurant service health check
+    try:
+        from app.controllers.restaurant_result_controller import RestaurantResultController
+        restaurant_stats = await RestaurantResultController.get_restaurant_statistics()
+        restaurant_status = "healthy"
+    except Exception as e:
+        logger.error(f"Restaurant service health check failed: {str(e)}")
+        restaurant_stats = {}
+        restaurant_status = "error"
+    
     return {
         "status": "healthy",
         "database": {
@@ -120,7 +132,18 @@ async def health_check():
             "status": websocket_status,
             "stats": websocket_stats
         },
-        "version": "0.0.1",
+        "restaurant_service": {
+            "status": restaurant_status,
+            "stats": restaurant_stats
+        },
+        "version": "2.3.0",
+        "services": [
+            "web_crawling", 
+            "content_scraping", 
+            "file_downloading", 
+            "scheduled_crawling", 
+            "restaurant_deals_scraping"
+        ]
     }
 
 app = socket_app

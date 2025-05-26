@@ -1155,6 +1155,164 @@ class ApolloOrchestrator:
         except Exception as e:
             self.logger.error(f"Error getting year by ID: {str(e)}")
             return None
+        
+    async def run_restaurant_scraping(
+        self,
+        task_id: str,
+        cities: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Run the restaurant deals scraping workflow with enhanced progress tracking.
+        Enhanced with real-time WebSocket updates while preserving all existing functionality.
+        
+        Args:
+            task_id: Task ID for tracking progress
+            cities: List of cities to scrape restaurant deals from
+            
+        Returns:
+            Dictionary with scraping results
+        """
+        # Start real-time publishing for this task (WebSocket enhancement)
+        await self._start_realtime_publishing(task_id, interval=2.0)
+        
+        # Update task status (existing functionality)
+        task_manager.update_task_status(
+            task_id,
+            status="running",
+            progress=0.0
+        )
+        
+        # Log start of restaurant scraping workflow (existing functionality)
+        self.publish_log(task_id, f"Starting restaurant deals scraping for cities: {', '.join(cities)}", "info")
+        
+        try:
+            # Step 1: Initialize scraper service
+            task_manager.update_task_status(
+                task_id,
+                status="initializing",
+                progress=5.0
+            )
+            
+            # Generate unique output directory for this task
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            output_dir = os.path.join(self.base_directory, "restaurant_deals", f"restaurant_{timestamp}")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Import and create the restaurant scraper service
+            from app.services.restaurant_deal_scrapper_service import RestaurantDealsScraperService
+            
+            scraper_service = RestaurantDealsScraperService(
+                cities_list=cities,
+                country="Pakistan",
+                language="en",
+                output_dir=output_dir
+            )
+            
+            self.publish_log(task_id, f"Initialized restaurant scraper for {len(cities)} cities", "info")
+            
+            # Step 2: Run the scraping process with task ID for progress tracking
+            task_manager.update_task_status(
+                task_id,
+                status="scraping",
+                progress=10.0
+            )
+            
+            self.publish_log(task_id, "Starting restaurant deals scraping process", "info")
+            
+            # Run scraping in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            scraping_result = await loop.run_in_executor(
+                None, 
+                scraper_service.scrape_all_deals,
+                task_id
+            )
+            
+            # Step 3: Save results to database
+            task_manager.update_task_status(
+                task_id,
+                status="saving_to_database",
+                progress=95.0
+            )
+            
+            self.publish_log(task_id, "Saving restaurant scraping results to database", "info")
+            
+            try:
+                # Import database controller
+                from app.controllers.restaurant_result_controller import RestaurantResultController
+                
+                # Save to database
+                await RestaurantResultController.create_restaurant_result(
+                    task_id=task_id,
+                    cities_requested=cities,
+                    cities_processed=scraping_result.get("cities_processed", 0),
+                    restaurants_processed=scraping_result.get("restaurants_processed", 0),
+                    deals_processed=scraping_result.get("deals_processed", 0),
+                    total_cities=scraping_result.get("total_cities", 0),
+                    total_restaurants=scraping_result.get("total_restaurants", 0),
+                    output_directory=output_dir,
+                    execution_time_seconds=scraping_result.get("execution_time_seconds", 0.0),
+                    status=scraping_result.get("status", "completed"),
+                    database_summary=scraping_result.get("database_summary")
+                )
+                
+                self.publish_log(task_id, "Restaurant scraping results saved to database successfully", "info")
+                
+            except Exception as db_error:
+                error_msg = f"Failed to save restaurant scraping results to database: {str(db_error)}"
+                self.publish_log(task_id, error_msg, "error")
+                
+                # Stop real-time publishing on error
+                await self._stop_realtime_publishing(task_id)
+                
+                task_manager.update_task_status(
+                    task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(task_id)
+            
+            # Step 4: Final completion
+            final_status = "completed" if scraping_result.get("status") == "completed" else scraping_result.get("status", "failed")
+            
+            task_manager.update_task_status(
+                task_id,
+                status=final_status,
+                progress=100.0,
+                result={
+                    "restaurant_scraping_complete": True,
+                    "cities_requested": cities,
+                    "cities_processed": scraping_result.get("cities_processed", 0),
+                    "restaurants_processed": scraping_result.get("restaurants_processed", 0),
+                    "deals_processed": scraping_result.get("deals_processed", 0),
+                    "total_cities": scraping_result.get("total_cities", 0),
+                    "total_restaurants": scraping_result.get("total_restaurants", 0),
+                    "output_directory": output_dir,
+                    "execution_time_seconds": scraping_result.get("execution_time_seconds", 0.0),
+                    "database_summary": scraping_result.get("database_summary")
+                }
+            )
+            
+            self.publish_log(task_id, f"Restaurant scraping completed successfully for cities: {', '.join(cities)}. Results saved to database.", "info")
+            
+            # Real-time publisher will auto-stop when task completes (WebSocket enhancement)
+            # No need to manually stop here as it will be handled automatically
+            
+            # Return final status (existing functionality)
+            return task_manager.get_task_status(task_id)
+        
+        except Exception as e:
+            error_msg = f"Error in restaurant scraping workflow: {str(e)}"
+            self.publish_log(task_id, error_msg, "error")
+            
+            # Stop real-time publishing on error (WebSocket enhancement)
+            await self._stop_realtime_publishing(task_id)
+            
+            task_manager.update_task_status(
+                task_id,
+                status="failed",
+                error=error_msg
+            )
+            return task_manager.get_task_status(task_id)
 
 # Create a global orchestrator instance (existing functionality preserved)
 orchestrator = ApolloOrchestrator()
