@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ScheduleService: 
     def __init__(self):
         self.running = False
-        self.check_interval = 15  
+        self.check_interval = 30 
         self.running_schedules = set()  
         self.background_task = None
         self.karachi_tz = pytz.timezone('Asia/Karachi')

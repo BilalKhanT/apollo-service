@@ -1,7 +1,8 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query, status
 from typing import Optional
 import logging
 from app.models.restaurant_deal.restaurant_model import (
+    DealResultSummary,
     DealScrapingRequest,
     DealScrapingResponse, 
     DealResultsResponse,
@@ -178,3 +179,20 @@ async def get_all_deal_results(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve deal scraping results: {str(e)}"
         )
+    
+@router.get("/result/{task_id}", response_model=DealResultSummary)
+async def get_deal_result_by_task_id(
+    task_id: str = Path(..., description="Task ID of the deal scraping operation")
+):
+    """
+    Get the result of a specific deal scraping task by task ID.
+    """
+    result = await DealScrapeController.get_deal_result_by_task_id(task_id)
+    
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No deal result found for task ID {task_id}"
+        )
+    
+    return result

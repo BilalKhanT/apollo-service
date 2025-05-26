@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from pytz import timezone
 
+from app.controllers.restaurant_deal.deal_scrape_controller import DealScrapeController
 from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule, ScheduleStatus
 from app.models.restaurant_deal.restaurant_model import DealScrapingRequest
 from app.utils.socket_manager import socket_manager
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 class DealScheduleService:
     def __init__(self):
         self.is_running = False
-        self.check_interval = 60  # Check every minute
+        self.check_interval = 30
         self.task: Optional[asyncio.Task] = None
         self.karachi_tz = timezone('Asia/Karachi')
         
@@ -109,14 +110,10 @@ class DealScheduleService:
                 "info"
             )
             
-            # Create deal scraping request
-            deal_request = DealScrapingRequest(
-                cities=schedule.cities,
-                scheduled_task_id=str(schedule.id)
-            )
+            task_info = await DealScrapeController.start_deal_scraping(cities=schedule.cities)
             
             # Execute the deal scraping
-            result = await orchestrator.run_deal_scraping(task_id=str(schedule.id), cities=schedule.cities)
+            result = await orchestrator.run_deal_scraping(task_id=task_info["task_id"], cities=schedule.cities)
             
             # Update schedule with success
             await self._update_schedule_success(schedule, result.task_id)
