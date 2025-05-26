@@ -45,7 +45,7 @@ from .schedule_model import (
     ScheduleStatusResponse,
     ScheduleActionResponse
 )
-from .restaurant_deals.restaurant_model import (
+from .restaurant_deal.restaurant_model import (
     RestaurantScrapingRequest,
     RestaurantScrapingResponse,
     RestaurantResultsResponse,
