@@ -2,7 +2,8 @@ from typing import Optional
 from fastapi import HTTPException
 import logging
 
-from app.models.database.crawl_schedule_model import CrawlSchedule, ScheduleStatus, DayOfWeek
+from app.models.database.crawl_schedule_model import CrawlSchedule, ScheduleStatus
+from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule, ScheduleStatus
 from app.models.schedule_model import (
     CrawlScheduleRequest, 
     CrawlScheduleResponse, 

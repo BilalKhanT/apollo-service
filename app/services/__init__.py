@@ -4,6 +4,7 @@ from .url_clusterer import URLClusterer
 from .year_extractor import YearExtractor
 from .scraper import ClusterScraper
 from .downloader import FileDownloader
+from .restaurant_deal.deal_scrape_service import DealScrapperService
 
 __all__ = [
     'Apollo',
@@ -12,4 +13,5 @@ __all__ = [
     'YearExtractor',
     'ClusterScraper',
     'FileDownloader',
+    'DealScrapperService',
 ]
