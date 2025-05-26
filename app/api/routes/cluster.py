@@ -8,6 +8,7 @@ from app.models.cluster_model import (
     ClustersListResponse
 )
 from app.models.base import ErrorResponse, ListResponse
+from datetime import timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,8 @@ async def get_crawl_results(
         total_count = len(crawl_results)
         paginated_results = crawl_results[skip:skip + limit]
         summary_results = []
+        karachi_offset = timedelta(hours=5)
+        
         for result in paginated_results:
             clusters_data = {}
             cluster_summary = {
@@ -126,14 +129,18 @@ async def get_crawl_results(
                         "files_count": file_count
                     }
             
+            # Convert timestamps to Karachi time for response only
+            created_at_karachi = result.created_at + karachi_offset if result.created_at else None
+            updated_at_karachi = result.updated_at + karachi_offset if result.updated_at else None
+            
             summary_results.append({
                 "task_id": result.task_id,
                 "link_found": result.link_found,
                 "pages_scraped": result.pages_scraped,
                 "is_scraped": result.is_scraped,
                 "error": result.error,
-                "created_at": result.created_at,
-                "updated_at": result.updated_at,
+                "created_at": created_at_karachi,
+                "updated_at": updated_at_karachi,
                 "clusters": clusters_data,
                 "yearclusters": years_data,
                 "cluster_summary": cluster_summary,

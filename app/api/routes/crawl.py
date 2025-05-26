@@ -1,180 +1,28 @@
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, status
-from app.controllers.cluster_controller import ClusterController
-from app.controllers.crawl_result_controller import CrawlResultController
-from app.models.cluster_model import (
-    ClusterDetailResponse, 
-    YearDetailResponse,
-    ClustersListResponse
-)
-from app.models.base import ErrorResponse, ListResponse
-from datetime import timedelta
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 import logging
+from app.models.crawl_model import (
+    CrawlRequest, 
+    CrawlResponse, 
+    CrawlStopResponse
+)
+from app.models.base import ErrorResponse
+from app.controllers.crawl_controller import CrawlController
+from app.utils.orchestrator import orchestrator
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["Clusters"])
+router = APIRouter(prefix="/api/crawl", tags=["Crawling"])
 
-@router.get(
-    "/clusters",
-    response_model=ClustersListResponse,
+@router.post(
+    "",
+    response_model=CrawlResponse,
     responses={
-        200: {
-            "description": "Clusters and years retrieved successfully",
-            "model": ClustersListResponse
+        201: {
+            "description": "Crawl task created successfully",
+            "model": CrawlResponse
         },
-        404: {
-            "description": "No crawl results found",
-            "model": ErrorResponse
-        },
-        500: {
-            "description": "Internal server error", 
-            "model": ErrorResponse
-        }
-    },
-    summary="Get available clusters and years",
-    description="Retrieve all available clusters and years from crawl results for scraping and downloading."
-)
-async def get_clusters_and_years(
-    crawl_task_id: Optional[str] = Query(
-        None,
-        description="Specific crawl task ID to get clusters from (uses most recent if not specified)",
-        example="123e4567-e89b-12d3-a456-426614174000"
-    )
-) -> ClustersListResponse:
-    try:
-        result = await ClusterController.get_clusters(crawl_task_id=crawl_task_id)
-        
-        return ClustersListResponse(
-            success=True,
-            message="Clusters and years retrieved successfully",
-            **result
-        )
-        
-    except Exception as e:
-        logger.error(f"Error getting clusters and years: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve clusters and years: {str(e)}"
-        )
-
-@router.get(
-    "/get-clusters",
-    response_model=ListResponse,
-    responses={
-        200: {
-            "description": "Crawl results retrieved successfully",
-            "model": ListResponse
-        },
-        500: {
-            "description": "Internal server error",
-            "model": ErrorResponse
-        }
-    },
-    summary="Get all crawl results with summary information",
-    description="Retrieve a list of all crawl results with cluster and year summaries."
-)
-async def get_crawl_results(
-    limit: int = Query(50, ge=1, le=100, description="Number of results to return"),
-    skip: int = Query(0, ge=0, description="Number of results to skip")
-) -> ListResponse:
-    try:
-        crawl_results = await CrawlResultController.list_crawl_results()
-        total_count = len(crawl_results)
-        paginated_results = crawl_results[skip:skip + limit]
-        summary_results = []
-        
-        # Karachi timezone offset (+5 hours)
-        karachi_offset = timedelta(hours=5)
-        
-        for result in paginated_results:
-            clusters_data = {}
-            cluster_summary = {
-                "total_domains": 0,
-                "total_clusters": 0,
-                "total_urls": 0
-            }
-            
-            if result.clusters:
-                cluster_summary["total_domains"] = len(result.clusters)
-                
-                for domain_name, domain_data in result.clusters.items():
-                    clusters_data[domain_name] = {
-                        "id": domain_data.id,
-                        "count": domain_data.count,
-                        "clusters": []
-                    }
-
-                    for sub_cluster in domain_data.clusters:
-                        clusters_data[domain_name]["clusters"].append({
-                            "id": sub_cluster.id,
-                            "path": sub_cluster.path,
-                            "url_count": sub_cluster.url_count
-                        })
-                    
-                    cluster_summary["total_clusters"] += len(domain_data.clusters)
-                    cluster_summary["total_urls"] += domain_data.count
-            
-            years_data = {}
-            year_summary = {
-                "total_years": 0,
-                "total_files": 0
-            }
-            
-            if result.yearclusters:
-                year_summary["total_years"] = len(result.yearclusters)
-                for year, files in result.yearclusters.items():
-                    file_count = len(files)
-                    year_summary["total_files"] += file_count
-                    years_data[year] = {
-                        "year": year,
-                        "files_count": file_count
-                    }
-            
-            # Convert timestamps to Karachi time for response only
-            created_at_karachi = result.created_at + karachi_offset if result.created_at else None
-            updated_at_karachi = result.updated_at + karachi_offset if result.updated_at else None
-            
-            summary_results.append({
-                "task_id": result.task_id,
-                "link_found": result.link_found,
-                "pages_scraped": result.pages_scraped,
-                "is_scraped": result.is_scraped,
-                "error": result.error,
-                "created_at": created_at_karachi,
-                "updated_at": updated_at_karachi,
-                "clusters": clusters_data,
-                "yearclusters": years_data,
-                "cluster_summary": cluster_summary,
-                "year_summary": year_summary
-            })
-        
-        return ListResponse(
-            success=True,
-            message=f"Retrieved {len(summary_results)} crawl results",
-            data=summary_results,
-            total_count=total_count,
-            page=skip // limit + 1,
-            page_size=limit
-        )
-        
-    except Exception as e:
-        logger.error(f"Error getting crawl results: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get crawl results: {str(e)}"
-        )
-
-@router.get(
-    "/tasks/{task_id}/clusters/{cluster_id}",
-    response_model=ClusterDetailResponse,
-    responses={
-        200: {
-            "description": "Cluster details retrieved successfully",
-            "model": ClusterDetailResponse
-        },
-        404: {
-            "description": "Task or cluster not found",
+        400: {
+            "description": "Invalid request parameters",
             "model": ErrorResponse
         },
         500: {
@@ -182,57 +30,157 @@ async def get_crawl_results(
             "model": ErrorResponse
         }
     },
-    summary="Get detailed cluster information",
-    description="Retrieve detailed information about a specific cluster including all URLs."
+    status_code=status.HTTP_201_CREATED,
+    summary="Start a new crawl operation",
+    description="Initiates a new web crawling task with the specified parameters. The task runs asynchronously and returns immediately with a task ID for tracking progress."
 )
-async def get_cluster_by_id(
+async def start_crawl(
+    request: CrawlRequest, 
+    background_tasks: BackgroundTasks
+) -> CrawlResponse:
+    try:
+        crawl_status = await CrawlController.start_crawl(
+            base_url=request.base_url,
+            max_links_to_scrape=request.max_links_to_scrape,
+            max_pages_to_scrape=request.max_pages_to_scrape,
+            depth_limit=request.depth_limit,
+            domain_restriction=request.domain_restriction,
+            scrape_pdfs_and_xls=request.scrape_pdfs_and_xls,
+            stop_scraper=request.stop_scraper
+        )
+
+        background_tasks.add_task(
+            run_crawl_background,
+            task_id=crawl_status.id,
+            base_url=request.base_url,
+            max_links_to_scrape=request.max_links_to_scrape,
+            max_pages_to_scrape=request.max_pages_to_scrape,
+            depth_limit=request.depth_limit,
+            domain_restriction=request.domain_restriction,
+            scrape_pdfs_and_xls=request.scrape_pdfs_and_xls,
+            stop_scraper=request.stop_scraper
+        )
+        
+        return CrawlResponse(
+            success=True,
+            message="Crawl task started successfully",
+            data=crawl_status
+        )
+        
+    except ValueError as e:
+        logger.error(f"Validation error starting crawl: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid request parameters: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error starting crawl: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start crawl task: {str(e)}"
+        )
+
+async def run_crawl_background(
     task_id: str,
-    cluster_id: str
-) -> ClusterDetailResponse:
+    base_url: str,
+    max_links_to_scrape: int = None,
+    max_pages_to_scrape: int = None,
+    depth_limit: int = None,
+    domain_restriction: bool = True,
+    scrape_pdfs_and_xls: bool = True,
+    stop_scraper: bool = False
+):
     try:
-        cluster_details = await ClusterController.get_cluster_by_id(cluster_id, task_id)
-        return cluster_details
+        await orchestrator.run_crawl(
+            task_id=task_id,
+            base_url=base_url,
+            max_links_to_scrape=max_links_to_scrape,
+            max_pages_to_scrape=max_pages_to_scrape,
+            depth_limit=depth_limit,
+            domain_restriction=domain_restriction,
+            scrape_pdfs_and_xls=scrape_pdfs_and_xls,
+            stop_scraper=stop_scraper
+        )
+    except Exception as e:
+        logger.error(f"Error in background crawl task {task_id}: {str(e)}")
+
+@router.get(
+    "/{task_id}",
+    response_model=CrawlResponse,
+    responses={
+        200: {
+            "description": "Crawl status retrieved successfully",
+            "model": CrawlResponse
+        },
+        404: {
+            "description": "Task not found",
+            "model": ErrorResponse
+        },
+        400: {
+            "description": "Invalid task type",
+            "model": ErrorResponse
+        }
+    },
+    summary="Get crawl task status",
+    description="Retrieve the current status and progress of a crawling task by its ID."
+)
+async def get_crawl_status(task_id: str) -> CrawlResponse:
+    try:
+        crawl_status = await CrawlController.get_crawl_status(task_id)
+        return CrawlResponse(
+            success=True,
+            message="Crawl status retrieved successfully",
+            data=crawl_status
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting cluster {cluster_id} for task {task_id}: {str(e)}")
+        logger.error(f"Error getting crawl status for task {task_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve cluster details: {str(e)}"
+            detail=f"Failed to retrieve crawl status: {str(e)}"
         )
 
-@router.get(
-    "/tasks/{task_id}/years/{year}",
-    response_model=YearDetailResponse,
+@router.post(
+    "/{task_id}/stop",
+    response_model=CrawlStopResponse,
     responses={
         200: {
-            "description": "Year details retrieved successfully",
-            "model": YearDetailResponse
+            "description": "Crawl task stopped successfully",
+            "model": CrawlStopResponse
         },
         404: {
-            "description": "Task or year not found",
+            "description": "Task not found",
+            "model": ErrorResponse
+        },
+        400: {
+            "description": "Invalid task type or already stopped",
             "model": ErrorResponse
         },
         500: {
-            "description": "Internal server error",
+            "description": "Failed to stop task",
             "model": ErrorResponse
         }
     },
-    summary="Get detailed year information",
-    description="Retrieve detailed information about files available for a specific year."
+    summary="Stop a running crawl task",
+    description="Gracefully stop a running crawl task and perform cleanup operations."
 )
-async def get_year_by_id(
-    task_id: str,
-    year: str
-) -> YearDetailResponse:
+async def stop_crawl_task(
+    task_id: str, 
+) -> CrawlStopResponse:
     try:
-        year_details = await ClusterController.get_year_by_id(year, task_id)
-        return year_details
+        result = await CrawlController.stop_crawl_task(task_id)
+        return CrawlStopResponse(
+            success=True,
+            message=result.get("message", "Crawl task stopped successfully"),
+            task_id=task_id,
+            cleanup_completed=result.get("cleanup_completed", False)
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting year {year} for task {task_id}: {str(e)}")
+        logger.error(f"Error stopping crawl task {task_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve year details: {str(e)}"
+            detail=f"Failed to stop crawl task: {str(e)}"
         )
