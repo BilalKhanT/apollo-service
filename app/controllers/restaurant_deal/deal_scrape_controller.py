@@ -354,7 +354,7 @@ class DealScrapeController:
         except Exception as e:
             logger.error(f"Error retrieving deal result for task {task_id}: {str(e)}")
             return None
-    
+
     @staticmethod
     async def save_deal_result(
         task_id: str,
@@ -369,19 +369,6 @@ class DealScrapeController:
         """
         Save deal scraping results to database.
         This method is called by the orchestrator when scraping completes successfully.
-        
-        Args:
-            task_id: Task ID
-            cities_requested: List of cities that were requested
-            cities_processed: Number of cities successfully processed
-            restaurants_processed: Total restaurants found
-            deals_processed: Total deals found
-            execution_time_seconds: Execution time
-            restaurants_data: Complete restaurant data
-            summary_by_city: Summary statistics by city
-            
-        Returns:
-            Created DealResult document
         """
         try:
             # Check if result already exists
@@ -390,7 +377,20 @@ class DealScrapeController:
                 logger.warning(f"Deal result for task {task_id} already exists")
                 return existing_result
             
-            # Create new result
+            # Get the original task creation time from task manager
+            task_status = task_manager.get_task_status(task_id)
+            if task_status and task_status.get('created_at'):
+                # Parse the ISO format datetime string from task manager
+                from datetime import datetime
+                original_created_at = datetime.fromisoformat(task_status['created_at'].replace('Z', '+00:00'))
+                # Convert to UTC datetime (remove timezone info for MongoDB)
+                original_created_at = original_created_at.replace(tzinfo=None)
+            else:
+                # Fallback to current time if we can't get original creation time
+                logger.warning(f"Could not get original creation time for task {task_id}, using current time")
+                original_created_at = datetime.utcnow()
+            
+            # Create new result with correct timestamps
             deal_result = DealResult(
                 task_id=task_id,
                 cities_requested=cities_requested,
@@ -400,11 +400,13 @@ class DealScrapeController:
                 execution_time_seconds=execution_time_seconds,
                 restaurants_data=restaurants_data,
                 summary_by_city=summary_by_city,
-                completed_at=datetime.utcnow()
+                created_at=original_created_at,  
+                completed_at=datetime.utcnow()   
             )
             
             await deal_result.insert()
             logger.info(f"Saved deal result for task {task_id} to database")
+            logger.info(f"Task created at: {original_created_at}, completed at: {deal_result.completed_at}")
             
             return deal_result
             

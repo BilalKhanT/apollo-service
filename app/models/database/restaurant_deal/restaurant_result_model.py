@@ -24,8 +24,8 @@ class DealResult(Document):
     execution_time_seconds: float = Field(description="Total time taken to complete the task")
     restaurants_data: List[RestaurantData] = Field(default_factory=list, description="Complete restaurant data")
     summary_by_city: Dict[str, Dict[str, int]] = Field(default_factory=dict, description="Summary statistics by city")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(description="When the task was originally started")  
+    completed_at: datetime = Field(default_factory=datetime.utcnow, description="When the task was completed")
     
     class Settings:
         name = "restaurant_results"
