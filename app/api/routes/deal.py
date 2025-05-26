@@ -6,7 +6,8 @@ from app.models.restaurant_deal.restaurant_model import (
     DealScrapingRequest,
     DealScrapingResponse, 
     DealResultsResponse,
-    DealStopResponse
+    DealStopResponse,
+    DealResultsResponseMinimal
 )
 from app.models.base import ErrorResponse
 from app.controllers.restaurant_deal.deal_scrape_controller import DealScrapeController
@@ -120,7 +121,7 @@ async def stop_deal_scraping_task(task_id: str) -> DealStopResponse:
 
 @router.get(
     "/results",
-    response_model=DealResultsResponse,
+    response_model=DealResultsResponseMinimal,
     responses={
         200: {
             "description": "Deal scraping results retrieved successfully",
@@ -163,7 +164,7 @@ async def get_all_deal_results(
             limit=limit
         )
         
-        return DealResultsResponse(
+        return DealResultsResponseMinimal(
             success=True,
             message=f"Retrieved {results_data['returned_count']} deal scraping results",
             data=results_data["data"],

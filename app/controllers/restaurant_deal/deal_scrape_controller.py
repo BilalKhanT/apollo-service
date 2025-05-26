@@ -292,11 +292,19 @@ class DealScrapeController:
             # Convert to summary format
             results_data = []
             for deal_result in deal_results:
-                # Convert to summary using the model's method
-                summary_data = deal_result.get_summary()
+                minimal_summary = {
+                    "task_id": deal_result.task_id,
+                    "created_at": deal_result.created_at,
+                    "completed_at": deal_result.completed_at,
+                    "cities_requested": deal_result.cities_requested,
+                    "cities_processed": deal_result.cities_processed,
+                    "restaurants_processed": deal_result.restaurants_processed,
+                    "deals_processed": deal_result.deals_processed
+                }
                 
-                # Create DealResultSummary instance
-                deal_summary = DealResultSummary(**summary_data)
+                # Import here to avoid circular imports
+                from app.models.restaurant_deal.restaurant_model import DealResultSummaryMinimal
+                deal_summary = DealResultSummaryMinimal(**minimal_summary)
                 results_data.append(deal_summary)
             
             # Calculate pagination info

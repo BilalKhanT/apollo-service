@@ -41,6 +41,62 @@ class DealScrapingResponse(BaseResponse):
             }
         }
 
+class DealResultSummaryMinimal(BaseModel):
+    task_id: str = Field(description="Task identifier")
+    created_at: datetime = Field(description="When the task was started")
+    completed_at: datetime = Field(description="When the task was completed")
+    cities_requested: List[str] = Field(description="Cities that were requested")
+    cities_processed: int = Field(description="Number of cities successfully processed")
+    restaurants_processed: int = Field(description="Total restaurants found")
+    deals_processed: int = Field(description="Total deals found")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+        json_schema_extra = {
+            "example": {
+                "task_id": "b84751e8-2447-4d2c-bfc9-17f4c3d6d838",
+                "created_at": "2025-05-26T14:58:44.857956",
+                "completed_at": "2025-05-26T14:59:25.236544",
+                "cities_requested": ["Karachi", "Lahore", "Islamabad"],
+                "cities_processed": 3,
+                "restaurants_processed": 36,
+                "deals_processed": 119
+            }
+        }
+
+
+class DealResultsResponseMinimal(BaseResponse):
+    data: List[DealResultSummaryMinimal] = Field(description="List of minimal deal results")
+    total_count: int = Field(description="Total number of results available")
+    page: int = Field(description="Current page number")
+    page_size: int = Field(description="Number of results per page")
+    has_more: bool = Field(description="Whether there are more results available")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Retrieved 2 deal results",
+                "timestamp": "2025-05-26T10:00:00.000Z",
+                "data": [
+                    {
+                        "task_id": "b84751e8-2447-4d2c-bfc9-17f4c3d6d838",
+                        "created_at": "2025-05-26T14:58:44.857956",
+                        "completed_at": "2025-05-26T14:59:25.236544", 
+                        "cities_requested": ["Karachi", "Lahore", "Islamabad"],
+                        "cities_processed": 3,
+                        "restaurants_processed": 36,
+                        "deals_processed": 119
+                    }
+                ],
+                "total_count": 5,
+                "page": 1,
+                "page_size": 50,
+                "has_more": False
+            }
+        }
 
 class DealResultSummary(BaseModel):
     task_id: str = Field(description="Task identifier")
