@@ -26,9 +26,11 @@ from app.services.url_clusterer import URLClusterer
 from app.services.year_extractor import YearExtractor
 from app.services.scraper import ClusterScraper
 from app.services.downloader import FileDownloader
+from app.services.restaurant_deal.deal_scrape_service import DealScrapperService
 
 # Import database controller
 from app.controllers.crawl_result_controller import CrawlResultController
+from app.controllers.restaurant_deal.deal_scrape_controller import DealScrapeController
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -1155,6 +1157,385 @@ class ApolloOrchestrator:
         except Exception as e:
             self.logger.error(f"Error getting year by ID: {str(e)}")
             return None
+        
+    async def run_deal_scraping(
+    self,
+    task_id: str,
+    cities: List[str] = None
+) -> Dict[str, Any]:
+        """
+        Run the complete deal scraping workflow with enhanced progress tracking.
+        Enhanced with real-time WebSocket updates while preserving all existing functionality.
+        
+        Args:
+            task_id: Task ID for tracking progress
+            cities: List of cities to scrape (if None or empty, fetch all available cities)
+            
+        Returns:
+            Dictionary with deal scraping results
+        """
+        # Start real-time publishing for this task (WebSocket enhancement)
+        await self._start_realtime_publishing(task_id, interval=2.0)
+        
+        # Initialize task status
+        task_manager.update_task_status(
+            task_id,
+            status="initializing",
+            progress=0.0
+        )
+        
+        # Log start of the workflow
+        self.publish_log(task_id, "Starting deal scraping workflow", "info")
+        
+        try:
+            # === INITIALIZATION PHASE (0-5%) ===
+            task_manager.update_task_status(
+                task_id,
+                status="initializing",
+                progress=5.0
+            )
+            
+            # Define output directory with timestamp
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            deal_output_dir = os.path.join(self.base_directory, "deals", f"deals_{timestamp}")
+            
+            # Create the deal scrapper service
+            self.publish_log(task_id, "Initializing deal scrapper service", "info")
+            deal_scrapper = DealScrapperService(
+                country="Pakistan",
+                language="en", 
+                output_dir=deal_output_dir,
+                max_workers=10,
+                request_delay=0.5,
+                progress_update_interval=5
+            )
+            
+            # Store the deal scrapper instance for potential stopping
+            setattr(self, f"deal_scrapper_{task_id}", deal_scrapper)
+            
+            # Update task status
+            task_manager.update_task_status(
+                task_id,
+                status="scraping_deals",
+                progress=10.0,
+                result={
+                    "deal_scrape_initialized": True,
+                    "cities_requested": cities or [],
+                    "output_directory": deal_output_dir
+                }
+            )
+            
+            # === DEAL SCRAPING PHASE (10-95%) ===
+            self.publish_log(task_id, f"Starting deal scraping for cities: {cities or 'all available'}", "info")
+            
+            # Run the deal scraping workflow
+            loop = asyncio.get_event_loop()
+            scraping_result = await loop.run_in_executor(
+                None,
+                deal_scrapper.scrape_deals,
+                cities,
+                task_id
+            )
+            
+            # Check if scraping was successful
+            if scraping_result["status"] == "failed":
+                error_msg = scraping_result.get("error", "Deal scraping failed")
+                self.publish_log(task_id, error_msg, "error")
+                
+                # Clean up deal scrapper reference
+                if hasattr(self, f"deal_scrapper_{task_id}"):
+                    delattr(self, f"deal_scrapper_{task_id}")
+                
+                # Stop real-time publishing on error
+                await self._stop_realtime_publishing(task_id)
+                
+                task_manager.update_task_status(
+                    task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(task_id)
+            
+            # Check if scraping was stopped
+            if scraping_result["status"] == "stopped":
+                self.publish_log(task_id, "Deal scraping was stopped by user", "info")
+                
+                # Clean up deal scrapper reference
+                if hasattr(self, f"deal_scrapper_{task_id}"):
+                    delattr(self, f"deal_scrapper_{task_id}")
+                
+                # Update task status
+                task_manager.update_task_status(
+                    task_id,
+                    status="stopped",
+                    progress=95.0,
+                    result={
+                        **task_manager.get_task_status(task_id)["result"],
+                        "deal_scrape_results": scraping_result
+                    }
+                )
+                return task_manager.get_task_status(task_id)
+            
+            # Log completion of scraping
+            self.publish_log(
+                task_id,
+                f"Deal scraping completed. Processed {scraping_result['cities_processed']} cities, "
+                f"{scraping_result['restaurants_processed']} restaurants, found {scraping_result['deals_found']} deals.",
+                "info"
+            )
+            
+            # Update progress to 95%
+            task_manager.update_task_status(
+                task_id,
+                status="saving_to_database",
+                progress=95.0,
+                result={
+                    **task_manager.get_task_status(task_id)["result"],
+                    "deal_scrape_results": scraping_result
+                }
+            )
+            
+            # === SAVE TO DATABASE (95-100%) ===
+            self.publish_log(task_id, "Saving deal scraping results to database...", "info")
+            
+            try:
+                # Prepare data for database
+                cities_requested = cities or []
+                cities_processed = scraping_result["cities_processed"]
+                restaurants_processed = scraping_result["restaurants_processed"] 
+                deals_processed = scraping_result["deals_found"]
+                execution_time_seconds = scraping_result["execution_time_seconds"]
+                
+                # Convert restaurants data for database storage
+                restaurants_data = []
+                summary_by_city = {}
+                
+                # Process the cities data from scraping result
+                cities_data = scraping_result.get("cities_data", {})
+                for city, restaurants in cities_data.items():
+                    city_restaurants = 0
+                    city_deals = 0
+                    
+                    for restaurant_name, deals in restaurants.items():
+                        if deals:  # Only include restaurants with deals
+                            restaurant_data = {
+                                "name": restaurant_name,
+                                "location": city,
+                                "city": city,
+                                "cuisine_type": None,  # Not available from API
+                                "rating": None,        # Not available from API
+                                "deals": deals,
+                                "contact_info": None,  # Not available from API
+                                "scraped_at": datetime.now()
+                            }
+                            restaurants_data.append(restaurant_data)
+                            city_restaurants += 1
+                            city_deals += len(deals)
+                    
+                    if city_restaurants > 0:
+                        summary_by_city[city] = {
+                            "restaurants": city_restaurants,
+                            "deals": city_deals
+                        }
+                
+                # Save to database - ONLY ON SUCCESS
+                await DealScrapeController.save_deal_result(
+                    task_id=task_id,
+                    cities_requested=cities_requested,
+                    cities_processed=cities_processed,
+                    restaurants_processed=restaurants_processed,
+                    deals_processed=deals_processed,
+                    execution_time_seconds=execution_time_seconds,
+                    restaurants_data=restaurants_data,
+                    summary_by_city=summary_by_city
+                )
+                
+                self.publish_log(task_id, "Deal scraping results saved to database successfully", "info")
+                
+            except Exception as db_error:
+                error_msg = f"Failed to save deal scraping results to database: {str(db_error)}"
+                self.publish_log(task_id, error_msg, "error")
+                
+                # Clean up deal scrapper reference
+                if hasattr(self, f"deal_scrapper_{task_id}"):
+                    delattr(self, f"deal_scrapper_{task_id}")
+                
+                # Stop real-time publishing on error
+                await self._stop_realtime_publishing(task_id)
+                
+                task_manager.update_task_status(
+                    task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(task_id)
+            
+            # === COMPLETION (100%) ===
+            # Update status to completed
+            task_manager.update_task_status(
+                task_id,
+                status="completed",
+                progress=100.0,
+                result={
+                    **task_manager.get_task_status(task_id)["result"],
+                    "database_save_complete": True,
+                    "deal_scraping_complete": True
+                }
+            )
+            
+            self.publish_log(task_id, "Deal scraping workflow completed successfully. Results saved to database.", "info")
+            
+            # Clean up deal scrapper reference
+            if hasattr(self, f"deal_scrapper_{task_id}"):
+                delattr(self, f"deal_scrapper_{task_id}")
+            
+            # Real-time publisher will auto-stop when task completes
+            # No need to manually stop here as it will be handled automatically
+            
+            # Return final status
+            return task_manager.get_task_status(task_id)
+            
+        except Exception as e:
+            error_msg = f"Error in deal scraping workflow: {str(e)}"
+            self.publish_log(task_id, error_msg, "error")
+            self.publish_log(task_id, traceback.format_exc(), "error")
+            
+            # Clean up deal scrapper reference
+            if hasattr(self, f"deal_scrapper_{task_id}"):
+                delattr(self, f"deal_scrapper_{task_id}")
+            
+            # Stop real-time publishing on error
+            await self._stop_realtime_publishing(task_id)
+            
+            task_manager.update_task_status(
+                task_id,
+                status="failed",
+                error=error_msg
+            )
+            return task_manager.get_task_status(task_id)
+
+    def stop_deal_scraping(self, task_id: str) -> Dict[str, Any]:
+        """
+        Stop a running deal scraping process gracefully with proper cleanup.
+        Enhanced with real-time publishing cleanup while preserving existing functionality.
+
+        Args:
+            task_id: ID of the task to stop
+        
+        Returns:
+            Dictionary with stop result
+        """
+        self.publish_log(task_id, f"Attempting to stop deal scraping task {task_id} gracefully...", "info")
+
+        # Get the task status
+        task_status = task_manager.get_task_status(task_id)
+        
+        if not task_status:
+            error_msg = f"Task {task_id} not found"
+            self.publish_log(task_id, error_msg, "error")
+            return {"success": False, "message": error_msg}
+        
+        # Check if task is a deal scraping task
+        if task_status.get("type") != "deal_scraping":
+            error_msg = f"Task {task_id} is not a deal scraping task"
+            self.publish_log(task_id, error_msg, "error")
+            return {"success": False, "message": error_msg}
+        
+        # Check if task is already completed or failed
+        current_status = task_status.get("status")
+        if current_status in ["completed", "failed", "stopped"]:
+            msg = f"Task {task_id} is already in '{current_status}' state"
+            self.publish_log(task_id, msg, "info")
+            return {"success": True, "message": msg}
+        
+        # Task is running, try to stop it
+        try:
+            # Stop real-time publishing first
+            try:
+                import asyncio
+                from app.utils.realtime_publisher import realtime_publisher
+                
+                # Run in async context if available
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(realtime_publisher.stop_publishing(task_id))
+                    else:
+                        loop.run_until_complete(realtime_publisher.stop_publishing(task_id))
+                except RuntimeError:
+                    asyncio.run(realtime_publisher.stop_publishing(task_id))
+                    
+                self.publish_log(task_id, "Stopped real-time publishing for task", "info")
+            except Exception as e:
+                self.publish_log(task_id, f"Warning: Could not stop real-time publishing: {str(e)}", "warning")
+            
+            # Get the deal scrapper instance from context if available
+            deal_scrapper_instance = getattr(self, f"deal_scrapper_{task_id}", None)
+            
+            if deal_scrapper_instance:
+                # Stop the deal scrapper directly
+                self.publish_log(task_id, "Stopping deal scrapper...", "info")
+                stop_result = deal_scrapper_instance.stop()
+                
+                if stop_result:
+                    # Remove reference to the deal scrapper
+                    delattr(self, f"deal_scrapper_{task_id}")
+                    
+                    # Update task status
+                    task_manager.update_task_status(
+                        task_id,
+                        status="stopped",
+                        progress=95.0,
+                        result={
+                            **task_status.get("result", {}),
+                            "stopped_at": datetime.now().isoformat(),
+                            "stopped_gracefully": True
+                        }
+                    )
+                    
+                    self.publish_log(task_id, "Deal scrapper stopped gracefully", "info")
+                    return {
+                        "success": True, 
+                        "message": "Deal scrapper stopped gracefully",
+                        "cleanup_completed": True
+                    }
+                else:
+                    self.publish_log(task_id, "Failed to stop deal scrapper", "error")
+                    return {"success": False, "message": "Failed to stop deal scrapper"}
+            else:
+                # No direct deal scrapper instance, just update the task status
+                self.publish_log(task_id, "No active deal scrapper instance found, updating task status to stopped", "info")
+                
+                # Update task status to stopped
+                task_manager.update_task_status(
+                    task_id,
+                    status="stopped",
+                    progress=95.0,
+                    result={
+                        **task_status.get("result", {}),
+                        "stopped_at": datetime.now().isoformat(),
+                        "stopped_gracefully": False
+                    }
+                )
+                
+                return {
+                    "success": True, 
+                    "message": "Task marked as stopped but no active deal scrapper found",
+                    "cleanup_completed": False
+                }
+        
+        except Exception as e:
+            error_msg = f"Error stopping deal scrapper: {str(e)}"
+            self.publish_log(task_id, error_msg, "error")
+            
+            # Try to update task status anyway
+            task_manager.update_task_status(
+                task_id,
+                status="failed",
+                error=error_msg
+            )
+            
+            return {"success": False, "message": error_msg}
 
 # Create a global orchestrator instance (existing functionality preserved)
 orchestrator = ApolloOrchestrator()
