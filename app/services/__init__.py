@@ -6,6 +6,7 @@ from .scraper import ClusterScraper
 from .downloader import FileDownloader
 from .restaurant_deal.deal_scrape_service import DealScrapperService
 from .restaurant_deal.deal_schedule_service import DealScheduleService
+from .fb_scrape.fb_scrape_service import FacebookScrapingService
 
 __all__ = [
     'Apollo',
@@ -16,4 +17,5 @@ __all__ = [
     'FileDownloader',
     'DealScrapperService',
     'DealScheduleService',
+    'FacebookScrapingService',
 ]

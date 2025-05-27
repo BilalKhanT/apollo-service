@@ -7,6 +7,7 @@ import asyncio
 from typing import Dict, Any, List, Optional
 import json
 
+from app.services.fb_scrape.fb_scrape_service import FacebookScrapingService
 from app.utils.task_manager import task_manager
 from app.utils.config import (
     CRAWLER_USER_AGENT, CRAWLER_TIMEOUT, CRAWLER_NUM_WORKERS,
@@ -1158,6 +1159,8 @@ class ApolloOrchestrator:
             self.logger.error(f"Error getting year by ID: {str(e)}")
             return None
         
+    # Restaurant Deal Scraping Flow
+        
     async def run_deal_scraping(
     self,
     task_id: str,
@@ -1537,6 +1540,499 @@ class ApolloOrchestrator:
             )
             
             return {"success": False, "message": error_msg}
+        
+    # FB Scraping Flow
+
+    async def run_facebook_scraping(
+        self,
+        task_id: str,
+        keywords: List[str],
+        days: int,
+        access_token: str,
+        page_id: str
+    ) -> Dict[str, Any]:
+        """
+        Run the complete Facebook scraping workflow with enhanced progress tracking.
+        Enhanced with real-time WebSocket updates while preserving all existing functionality.
+        
+        Args:
+            task_id: Task ID for tracking progress
+            keywords: List of keywords to filter posts
+            days: Number of days to look back for posts
+            access_token: Facebook API access token
+            page_id: Facebook page ID to scrape
+            
+        Returns:
+            Dictionary with Facebook scraping results
+        """
+        # Start real-time publishing for this task (WebSocket enhancement)
+        await self._start_realtime_publishing(task_id, interval=2.0)
+        
+        # Initialize task status
+        task_manager.update_task_status(
+            task_id,
+            status="initializing",
+            progress=0.0
+        )
+        
+        # Log start of the workflow
+        self.publish_log(task_id, "Starting Facebook scraping workflow", "info")
+        
+        try:
+            # === INITIALIZATION PHASE (0-5%) ===
+            task_manager.update_task_status(
+                task_id,
+                status="initializing",
+                progress=5.0
+            )
+            
+            # Define output directory with timestamp
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            facebook_output_dir = os.path.join(self.base_directory, "facebook", f"facebook_{timestamp}")
+            
+            # Create the Facebook scrapping service
+            self.publish_log(task_id, "Initializing Facebook scrapping service", "info")
+            facebook_scrapper = FacebookScrapingService(
+                access_token=access_token,
+                page_id=page_id,
+                output_dir=facebook_output_dir,
+                progress_update_interval=5
+            )
+            
+            # Store the Facebook scrapper instance for potential stopping
+            setattr(self, f"facebook_scrapper_{task_id}", facebook_scrapper)
+            
+            # Update task status
+            task_manager.update_task_status(
+                task_id,
+                status="scraping_posts",
+                progress=10.0,
+                result={
+                    "facebook_scrape_initialized": True,
+                    "keywords_requested": keywords,
+                    "days_requested": days,
+                    "output_directory": facebook_output_dir
+                }
+            )
+            
+            # === FACEBOOK SCRAPING PHASE (10-95%) ===
+            self.publish_log(task_id, f"Starting Facebook scraping for keywords: {keywords} (last {days} days)", "info")
+            
+            # Run the Facebook scraping workflow
+            loop = asyncio.get_event_loop()
+            scraping_result = await loop.run_in_executor(
+                None,
+                facebook_scrapper.scrape_facebook_posts,
+                keywords,
+                days,
+                task_id
+            )
+            
+            # Check if scraping was successful
+            if scraping_result["status"] == "failed":
+                error_msg = scraping_result.get("error", "Facebook scraping failed")
+                self.publish_log(task_id, error_msg, "error")
+                
+                # Clean up Facebook scrapper reference
+                if hasattr(self, f"facebook_scrapper_{task_id}"):
+                    delattr(self, f"facebook_scrapper_{task_id}")
+                
+                # Stop real-time publishing on error
+                await self._stop_realtime_publishing(task_id)
+                
+                task_manager.update_task_status(
+                    task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(task_id)
+            
+            # Check if scraping was stopped
+            if scraping_result["status"] == "stopped":
+                self.publish_log(task_id, "Facebook scraping was stopped by user", "info")
+                
+                # Clean up Facebook scrapper reference
+                if hasattr(self, f"facebook_scrapper_{task_id}"):
+                    delattr(self, f"facebook_scrapper_{task_id}")
+                
+                # Update task status
+                task_manager.update_task_status(
+                    task_id,
+                    status="stopped",
+                    progress=95.0,
+                    result={
+                        **task_manager.get_task_status(task_id)["result"],
+                        "facebook_scrape_results": scraping_result
+                    }
+                )
+                return task_manager.get_task_status(task_id)
+            
+            # Log completion of scraping
+            self.publish_log(
+                task_id,
+                f"Facebook scraping completed. Processed {scraping_result['posts_processed']} posts, "
+                f"found {scraping_result['posts_found']} matching posts.",
+                "info"
+            )
+            
+            # Update progress to 95%
+            task_manager.update_task_status(
+                task_id,
+                status="saving_to_database",
+                progress=95.0,
+                result={
+                    **task_manager.get_task_status(task_id)["result"],
+                    "facebook_scrape_results": scraping_result
+                }
+            )
+            
+            # === SAVE TO DATABASE (95-100%) ===
+            self.publish_log(task_id, "Saving Facebook scraping results to database...", "info")
+            
+            try:
+                # Prepare data for database
+                keywords_requested = keywords
+                days_requested = days
+                posts_processed = scraping_result["posts_processed"]
+                categories_found = scraping_result.get("categories_found", {})
+                keyword_matches = scraping_result.get("keyword_matches", {})
+                execution_time_seconds = scraping_result["execution_time_seconds"]
+                output_directory = scraping_result["output_directory"]
+                date_range = scraping_result["date_range"]
+                
+                # Convert posts data for database storage
+                posts_data = []
+                
+                # Process the posts data from scraping result if available
+                for post in scraping_result.get("posts_data", []):
+                    post_data = {
+                        "post_id": post.get("id", ""),
+                        "message": post.get("message", ""),
+                        "created_time": post.get("created_time", ""),
+                        "category": post.get("category", "other"),
+                        "attachments": post.get("attachments", []),
+                        "scraped_at": datetime.now()
+                    }
+                    posts_data.append(post_data)
+                
+                # Save to database - ONLY ON SUCCESS
+                await self.save_facebook_result(
+                    task_id=task_id,
+                    keywords_requested=keywords_requested,
+                    days_requested=days_requested,
+                    posts_processed=posts_processed,
+                    categories_found=categories_found,
+                    keyword_matches=keyword_matches,
+                    execution_time_seconds=execution_time_seconds,
+                    output_directory=output_directory,
+                    date_range=date_range,
+                    posts_data=posts_data
+                )
+                
+                self.publish_log(task_id, "Facebook scraping results saved to database successfully", "info")
+                
+            except Exception as db_error:
+                error_msg = f"Failed to save Facebook scraping results to database: {str(db_error)}"
+                self.publish_log(task_id, error_msg, "error")
+                
+                # Clean up Facebook scrapper reference
+                if hasattr(self, f"facebook_scrapper_{task_id}"):
+                    delattr(self, f"facebook_scrapper_{task_id}")
+                
+                # Stop real-time publishing on error
+                await self._stop_realtime_publishing(task_id)
+                
+                task_manager.update_task_status(
+                    task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(task_id)
+            
+            # === COMPLETION (100%) ===
+            # Update status to completed
+            task_manager.update_task_status(
+                task_id,
+                status="completed",
+                progress=100.0,
+                result={
+                    **task_manager.get_task_status(task_id)["result"],
+                    "database_save_complete": True,
+                    "facebook_scraping_complete": True
+                }
+            )
+            
+            self.publish_log(task_id, "Facebook scraping workflow completed successfully. Results saved to database.", "info")
+            
+            # Clean up Facebook scrapper reference
+            if hasattr(self, f"facebook_scrapper_{task_id}"):
+                delattr(self, f"facebook_scrapper_{task_id}")
+            
+            # Real-time publisher will auto-stop when task completes
+            # No need to manually stop here as it will be handled automatically
+            
+            # Return final status
+            return task_manager.get_task_status(task_id)
+            
+        except Exception as e:
+            error_msg = f"Error in Facebook scraping workflow: {str(e)}"
+            self.publish_log(task_id, error_msg, "error")
+            self.publish_log(task_id, traceback.format_exc(), "error")
+            
+            # Clean up Facebook scrapper reference
+            if hasattr(self, f"facebook_scrapper_{task_id}"):
+                delattr(self, f"facebook_scrapper_{task_id}")
+            
+            # Stop real-time publishing on error
+            await self._stop_realtime_publishing(task_id)
+            
+            task_manager.update_task_status(
+                task_id,
+                status="failed",
+                error=error_msg
+            )
+            return task_manager.get_task_status(task_id)
+
+    def stop_facebook_scraping(self, task_id: str) -> Dict[str, Any]:
+        """
+        Stop a running Facebook scraping process gracefully with proper cleanup.
+        Enhanced with real-time publishing cleanup while preserving existing functionality.
+
+        Args:
+            task_id: ID of the task to stop
+        
+        Returns:
+            Dictionary with stop result
+        """
+        self.publish_log(task_id, f"Attempting to stop Facebook scraping task {task_id} gracefully...", "info")
+
+        # Get the task status
+        task_status = task_manager.get_task_status(task_id)
+        
+        if not task_status:
+            error_msg = f"Task {task_id} not found"
+            self.publish_log(task_id, error_msg, "error")
+            return {"success": False, "message": error_msg}
+        
+        # Check if task is a Facebook scraping task
+        if task_status.get("type") != "facebook_scraping":
+            error_msg = f"Task {task_id} is not a Facebook scraping task"
+            self.publish_log(task_id, error_msg, "error")
+            return {"success": False, "message": error_msg}
+        
+        # Check if task is already completed or failed
+        current_status = task_status.get("status")
+        if current_status in ["completed", "failed", "stopped"]:
+            msg = f"Task {task_id} is already in '{current_status}' state"
+            self.publish_log(task_id, msg, "info")
+            return {"success": True, "message": msg}
+        
+        # Task is running, try to stop it
+        try:
+            # Stop real-time publishing first
+            try:
+                import asyncio
+                from app.utils.realtime_publisher import realtime_publisher
+                
+                # Run in async context if available
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(realtime_publisher.stop_publishing(task_id))
+                    else:
+                        loop.run_until_complete(realtime_publisher.stop_publishing(task_id))
+                except RuntimeError:
+                    # No event loop running, create a new one for this operation
+                    asyncio.run(realtime_publisher.stop_publishing(task_id))
+                    
+                self.publish_log(task_id, "Stopped real-time publishing for task", "info")
+            except Exception as e:
+                self.publish_log(task_id, f"Warning: Could not stop real-time publishing: {str(e)}", "warning")
+            
+            # Get the Facebook scrapper instance from context if available
+            facebook_scrapper_instance = getattr(self, f"facebook_scrapper_{task_id}", None)
+            
+            if facebook_scrapper_instance:
+                # Stop the Facebook scrapper directly
+                self.publish_log(task_id, "Stopping Facebook scrapper...", "info")
+                stop_result = facebook_scrapper_instance.stop()
+                
+                if stop_result:
+                    # Remove reference to the Facebook scrapper
+                    delattr(self, f"facebook_scrapper_{task_id}")
+                    
+                    # Update task status
+                    task_manager.update_task_status(
+                        task_id,
+                        status="stopped",
+                        progress=95.0,
+                        result={
+                            **task_status.get("result", {}),
+                            "stopped_at": datetime.now().isoformat(),
+                            "stopped_gracefully": True
+                        }
+                    )
+                    
+                    self.publish_log(task_id, "Facebook scrapper stopped gracefully", "info")
+                    return {
+                        "success": True, 
+                        "message": "Facebook scrapper stopped gracefully",
+                        "cleanup_completed": True
+                    }
+                else:
+                    self.publish_log(task_id, "Failed to stop Facebook scrapper", "error")
+                    return {"success": False, "message": "Failed to stop Facebook scrapper"}
+            else:
+                # No direct Facebook scrapper instance, just update the task status
+                self.publish_log(task_id, "No active Facebook scrapper instance found, updating task status to stopped", "info")
+                
+                # Update task status to stopped
+                task_manager.update_task_status(
+                    task_id,
+                    status="stopped",
+                    progress=95.0,
+                    result={
+                        **task_status.get("result", {}),
+                        "stopped_at": datetime.now().isoformat(),
+                        "stopped_gracefully": False
+                    }
+                )
+                
+                return {
+                    "success": True, 
+                    "message": "Task marked as stopped but no active Facebook scrapper found",
+                    "cleanup_completed": False
+                }
+        
+        except Exception as e:
+            error_msg = f"Error stopping Facebook scrapper: {str(e)}"
+            self.publish_log(task_id, error_msg, "error")
+            
+            # Try to update task status anyway
+            task_manager.update_task_status(
+                task_id,
+                status="failed",
+                error=error_msg
+            )
+            
+            return {"success": False, "message": error_msg}
+
+    async def save_facebook_result(
+    self,
+    task_id: str,
+    keywords_requested: List[str],
+    days_requested: int,
+    posts_processed: int,
+    categories_found: Dict[str, int],
+    keyword_matches: Dict[str, Dict[str, int]],
+    execution_time_seconds: float,
+    output_directory: str,
+    date_range: Dict[str, str],
+    posts_data: List[Dict[str, Any]]
+) -> None:
+        """
+        Save Facebook scraping results to database.
+        FIXED: Correct Beanie query syntax and proper object creation
+        """
+        try:
+            # Import here to avoid circular imports
+            from app.models.database.fb_scrape.fb_result_model import FacebookResult, FacebookPostData
+            
+            self.logger.info(f"Attempting to save Facebook result for task {task_id}")
+            self.logger.info(f"Posts data count: {len(posts_data)}")
+            
+            # FIXED: Correct Beanie query syntax
+            existing_result = await FacebookResult.find_one({"task_id": task_id})
+            if existing_result:
+                self.logger.warning(f"Facebook result for task {task_id} already exists, skipping save")
+                return
+            
+            # Get the original task creation time from task manager
+            task_status = task_manager.get_task_status(task_id)
+            if task_status and task_status.get('created_at'):
+                try:
+                    # Parse the ISO format datetime string from task manager
+                    original_created_at = datetime.fromisoformat(task_status['created_at'].replace('Z', '+00:00'))
+                    # Convert to UTC datetime (remove timezone info for MongoDB)
+                    original_created_at = original_created_at.replace(tzinfo=None)
+                    self.logger.info(f"Using original creation time: {original_created_at}")
+                except Exception as dt_error:
+                    self.logger.warning(f"Error parsing creation time: {dt_error}, using current time")
+                    original_created_at = datetime.utcnow()
+            else:
+                # Fallback to current time if we can't get original creation time
+                self.logger.warning(f"Could not get original creation time for task {task_id}, using current time")
+                original_created_at = datetime.utcnow()
+            
+            # FIXED: Convert posts data to FacebookPostData objects
+            processed_posts_data = []
+            for post in posts_data:
+                try:
+                    # Create FacebookPostData object with proper field mapping
+                    post_obj = FacebookPostData(
+                        post_id=post.get("id", "unknown"),  # Map 'id' to 'post_id'
+                        message=post.get("message", ""),
+                        created_time=post.get("created_time", ""),
+                        category=post.get("category", "other"),
+                        attachments=post.get("attachments", []),
+                        scraped_at=datetime.utcnow()
+                    )
+                    processed_posts_data.append(post_obj)
+                except Exception as post_error:
+                    self.logger.warning(f"Error processing post data: {post_error}, skipping post")
+                    continue
+            
+            self.logger.info(f"Successfully processed {len(processed_posts_data)} posts for database")
+            
+            # Validate required fields
+            if not task_id or not isinstance(task_id, str):
+                raise ValueError("task_id must be a non-empty string")
+            if not isinstance(keywords_requested, list):
+                raise ValueError("keywords_requested must be a list")
+            if not isinstance(days_requested, int) or days_requested <= 0:
+                raise ValueError("days_requested must be a positive integer")
+            if not isinstance(posts_processed, int) or posts_processed < 0:
+                raise ValueError("posts_processed must be a non-negative integer")
+            
+            # Create new result with correct timestamps
+            facebook_result = FacebookResult(
+                task_id=task_id,
+                keywords_requested=keywords_requested,
+                days_requested=days_requested,
+                posts_processed=posts_processed,
+                categories_found=categories_found or {},
+                keyword_matches=keyword_matches or {},
+                execution_time_seconds=execution_time_seconds,
+                output_directory=output_directory,
+                date_range=date_range or {},
+                posts_data=processed_posts_data,  # Use FacebookPostData objects
+                created_at=original_created_at,
+                completed_at=datetime.utcnow()
+            )
+            
+            self.logger.info(f"Created FacebookResult object, attempting to save to database...")
+            
+            # Attempt to save with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await facebook_result.insert()
+                    self.logger.info(f"Successfully saved Facebook result for task {task_id} to database")
+                    self.logger.info(f"Task created at: {original_created_at}, completed at: {facebook_result.completed_at}")
+                    return
+                except Exception as insert_error:
+                    self.logger.error(f"Attempt {attempt + 1} failed to insert Facebook result: {str(insert_error)}")
+                    if attempt == max_retries - 1:
+                        raise insert_error
+                    await asyncio.sleep(1)  # Wait 1 second before retry
+            
+        except Exception as e:
+            self.logger.error(f"Error saving Facebook result for task {task_id}: {str(e)}")
+            self.logger.error(f"Error type: {type(e).__name__}")
+            self.logger.error(f"Error details: {repr(e)}")
+            import traceback
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise Exception(f"Failed to save Facebook result: {str(e)}")
 
 # Create a global orchestrator instance (existing functionality preserved)
 orchestrator = ApolloOrchestrator()

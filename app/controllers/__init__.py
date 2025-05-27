@@ -6,6 +6,7 @@ from .crawl_result_controller import CrawlResultController
 from .schedule_controller import ScheduleController
 from .restaurant_deal.deal_scrape_controller import DealScrapeController
 from .restaurant_deal.deal_schedule_controller import DealScheduleController
+from .fb_scrape.fb_scrape_controller import FacebookScrapeController
 
 __all__ = [
     'CrawlController',
@@ -16,4 +17,5 @@ __all__ = [
     'ScheduleController',
     'DealScrapeController',
     'DealScheduleController',
+    'FacebookScrapeController',
 ]

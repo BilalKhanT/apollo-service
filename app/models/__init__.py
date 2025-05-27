@@ -62,10 +62,19 @@ from .restaurant_deal.deal_schedule_model import (
     DealScheduleStatusResponse,
     DealScheduleActionResponse,
 )
+from app.models.fb_scrape.fb_scrape_model import (
+    FacebookResultSummary,
+    FacebookScrapingRequest,
+    FacebookScrapingResponse, 
+    FacebookResultsResponse,
+    FacebookStopResponse,
+    FacebookResultsResponseMinimal
+)
 from .database.crawl_result_model import CrawlResult
 from .database.crawl_schedule_model import CrawlSchedule
 from .database.restaurant_deal.restaurant_result_model import DealResult
 from .database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
+from .database.fb_scrape.fb_result_model import FacebookResult
 
 __all__ = [
     # Base models
@@ -120,6 +129,7 @@ __all__ = [
     'CrawlSchedule',
     'DealResult',
     'DealScrapeSchedule',
+    'FacebookResult',
 
     # Restaurant Deal models
     'DealScrapingRequest',
@@ -137,4 +147,12 @@ __all__ = [
     'DealScheduleListResponse',
     'DealScheduleStatusResponse',
     'DealScheduleActionResponse',
+
+    # FB scrape
+    'FacebookResultSummary',
+    'FacebookScrapingRequest',
+    'FacebookScrapingResponse', 
+    'FacebookResultsResponse',
+    'FacebookStopResponse',
+    'FacebookResultsResponseMinimal'
 ]
