@@ -1,10 +1,6 @@
 import os
 from typing import List, Optional
 
-# General settings
-# These values should be set in environment variables in production
-# Default values are provided for development
-
 # Crawler settings
 CRAWLER_USER_AGENT: str = os.getenv(
     "CRAWLER_USER_AGENT", 
@@ -56,9 +52,3 @@ MAX_DOWNLOAD_WORKERS: int = int(os.getenv("MAX_DOWNLOAD_WORKERS", "20"))
 
 # Storage settings
 DATA_DIR: str = os.getenv("DATA_DIR", "apollo_data")
-
-# Redis
-# REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
-# REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
-# REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
-# REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD", None)

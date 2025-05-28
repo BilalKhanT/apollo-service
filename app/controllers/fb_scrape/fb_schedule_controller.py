@@ -19,35 +19,27 @@ class FBScheduleController:
     @staticmethod
     async def create_or_update_schedule(request: FBScheduleRequest) -> FBScheduleResponse:
         try:
-            # Sort keywords for consistent comparison
             sorted_keywords = sorted([keyword.lower() for keyword in request.keywords])
-            
-            # Check for existing schedule with the same keywords
             existing_schedule = await FacebookScrapeSchedule.find_one(
                 FacebookScrapeSchedule.keywords == sorted_keywords
             )
             
             if existing_schedule:
                 logger.info(f"Updating existing Facebook schedule for keywords: {sorted_keywords}")
-                
-                # Update existing schedule
                 existing_schedule.schedule_name = request.schedule_name
                 existing_schedule.day_of_week = request.day_of_week
                 existing_schedule.time_of_day = request.time_of_day
                 existing_schedule.days = request.days
                 existing_schedule.update_timestamp()
-                
-                # Calculate next run for display (actual scheduling handled by APScheduler)
+
                 existing_schedule.next_run_at = existing_schedule.calculate_next_run()
-                
-                # Save and sync with scheduler
+
                 await existing_schedule.save()
                 schedule = existing_schedule
                 
                 logger.info(f"Updated Facebook schedule {schedule.id} and synced with unified scheduler")
                 
             else:
-                # Create new schedule
                 logger.info(f"Creating new Facebook schedule for keywords: {sorted_keywords}")
                 
                 schedule = FacebookScrapeSchedule(
@@ -59,10 +51,8 @@ class FBScheduleController:
                     status=ScheduleStatus.ACTIVE
                 )
 
-                # Calculate next run for display
                 schedule.next_run_at = schedule.calculate_next_run()
-                
-                # Save and sync with scheduler (handled by the model's save() method)
+
                 await schedule.save()
                 
                 logger.info(f"Created Facebook schedule {schedule.id} and synced with unified scheduler")
@@ -141,16 +131,13 @@ class FBScheduleController:
         skip: int = 0
     ) -> FBScheduleListResponse:
         try:
-            # Build query
             query = {}
             if status:
                 query[FacebookScrapeSchedule.status] = status
 
-            # Get schedules with pagination
             schedules = await FacebookScrapeSchedule.find(query).skip(skip).limit(limit).to_list()
             total_count = await FacebookScrapeSchedule.find(query).count()
-            
-            # Convert to response format
+
             schedule_responses = []
             for schedule in schedules:
                 schedule_responses.append(FBScheduleResponse(
@@ -195,8 +182,7 @@ class FBScheduleController:
                 )
             
             keywords_info = ", ".join(schedule.keywords)
-            
-            # Delete from database (this will also remove from scheduler via the model's delete() method)
+
             await schedule.delete()
             
             logger.info(f"Deleted Facebook schedule {schedule_id} for keywords: {keywords_info} and removed from unified scheduler")
@@ -261,7 +247,6 @@ class FBScheduleController:
             schedule.status = ScheduleStatus.PAUSED
             schedule.update_timestamp()
             
-            # Save and sync with scheduler (will remove from scheduler due to PAUSED status)
             await schedule.save()
             
             keywords_info = ", ".join(schedule.keywords)
@@ -295,7 +280,6 @@ class FBScheduleController:
             schedule.next_run_at = schedule.calculate_next_run()
             schedule.update_timestamp()
             
-            # Save and sync with scheduler (will add to scheduler due to ACTIVE status)
             await schedule.save()
             
             keywords_info = ", ".join(schedule.keywords)
@@ -321,11 +305,9 @@ class FBScheduleController:
                     status_code=404, 
                     detail=f"Facebook schedule {schedule_id} not found"
                 )
-            
-            # Track if timing-related fields changed
+
             timing_changed = False
-            
-            # Update only provided fields
+
             if request.keywords is not None:
                 schedule.keywords = request.keywords
             if request.days is not None:
@@ -340,15 +322,13 @@ class FBScheduleController:
                 timing_changed = True
             if request.status is not None:
                 schedule.status = request.status
-                timing_changed = True  # Status change affects scheduler
-            
-            # Recalculate next run time if timing-related fields changed
+                timing_changed = True  
+
             if timing_changed and schedule.status == ScheduleStatus.ACTIVE:
                 schedule.next_run_at = schedule.calculate_next_run()
             
             schedule.update_timestamp()
-            
-            # Save and sync with scheduler
+
             await schedule.save()
             
             logger.info(f"Updated Facebook schedule {schedule_id} and synced with unified scheduler")

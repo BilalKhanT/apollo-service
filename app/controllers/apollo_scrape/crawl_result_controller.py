@@ -48,11 +48,9 @@ class CrawlResultController:
     @staticmethod
     async def list_crawl_results() -> List[CrawlResult]:
         try:
-            # Sort by created_at in descending order (latest first)
-            # If created_at is not available, fall back to updated_at
             return await CrawlResult.find_all().sort([
-                ("created_at", -1),  # -1 for descending order
-                ("updated_at", -1)   # Secondary sort field
+                ("created_at", -1), 
+                ("updated_at", -1)  
             ]).to_list()
         except Exception as e:
             logger.error(f"Error listing crawl results: {str(e)}")

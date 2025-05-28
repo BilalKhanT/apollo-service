@@ -6,7 +6,6 @@ import traceback
 import asyncio
 from typing import Dict, Any, List, Optional
 import json
-
 from app.services.fb_scrape.fb_scrape_service import FacebookScrapingService
 from app.utils.task_manager import task_manager
 from app.utils.config import (
@@ -16,11 +15,8 @@ from app.utils.config import (
     DEFAULT_URL_PATTERNS_TO_IGNORE, FILE_EXTENSIONS,
     SOCIAL_MEDIA_KEYWORDS, BANK_KEYWORDS, CLUSTER_MIN_SIZE,
     CLUSTER_PATH_DEPTH, CLUSTER_SIMILARITY_THRESHOLD,
-    SCRAPER_OUTPUT_DIR, METADATA_DIR, EXPIRY_DAYS,
-    FILE_DOWNLOAD_DIR, MAX_DOWNLOAD_WORKERS, DATA_DIR
+    EXPIRY_DAYS,MAX_DOWNLOAD_WORKERS, DATA_DIR
 )
-
-# Import from services
 from app.services.apollo_scrape.apollo import Apollo
 from app.services.apollo_scrape.link_processor import LinkProcessor
 from app.services.apollo_scrape.url_clusterer import URLClusterer
@@ -28,12 +24,9 @@ from app.services.apollo_scrape.year_extractor import YearExtractor
 from app.services.apollo_scrape.scraper import ClusterScraper
 from app.services.apollo_scrape.downloader import FileDownloader
 from app.services.restaurant_deal.deal_scrape_service import DealScrapperService
-
-# Import database controller
 from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
 from app.controllers.restaurant_deal.deal_scrape_controller import DealScrapeController
 
-# Configure logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -41,32 +34,13 @@ logging.basicConfig(
 )
 
 class ApolloOrchestrator:
-    """
-    Enhanced orchestrator with real-time WebSocket integration.
-    Orchestrates the entire Apollo workflow:
-    1. Crawling (DATABASE-ONLY - NO FILES)
-    2. Link processing (temp files for processing)
-    3. URL clustering (temp files for processing)
-    4. Year extraction (temp files for processing)
-    5. Content scraping (file-based output)
-    6. File downloading (file-based output)
-    
-    Now includes real-time WebSocket updates for live progress tracking.
-    """
     
     def __init__(self, base_directory: str = None):
-        """
-        Initialize the orchestrator.
-        
-        Args:
-            base_directory: Base directory for storing temporary processing files
-        """
         self.base_directory = base_directory or DATA_DIR
         self.logger = logger
-        
-        # Create directory structure for temporary processing files only
+
         os.makedirs(self.base_directory, exist_ok=True)
-        self.temp_dir = os.path.join(self.base_directory, "temp")  # Temporary processing files
+        self.temp_dir = os.path.join(self.base_directory, "temp")  
         self.scrape_dir = os.path.join(self.base_directory, "scraped")
         self.download_dir = os.path.join(self.base_directory, "downloads")
         self.metadata_dir = os.path.join(self.base_directory, "metadata")
@@ -75,19 +49,8 @@ class ApolloOrchestrator:
             os.makedirs(directory, exist_ok=True)
 
     def publish_log(self, task_id: str, message: str, level: str = "info"):
-        """
-        Publish a log message to the task manager for real-time updates.
-        Enhanced with WebSocket integration while maintaining backward compatibility.
-    
-        Args:
-            task_id: The ID of the task
-            message: The log message
-            level: Log level (debug, info, warning, error)
-        """
-        # Log to task manager (this will auto-publish via WebSocket if available)
         task_manager.publish_log(task_id, message, level)
-            
-        # Also log to regular logger (preserving existing functionality)
+
         if level == "debug":
             self.logger.debug(message)
         elif level == "info":
@@ -98,7 +61,6 @@ class ApolloOrchestrator:
             self.logger.error(message)
     
     def cleanup_temp_files(self, files_to_cleanup: List[str]):
-        """Clean up temporary processing files (unchanged)"""
         for file_path in files_to_cleanup:
             try:
                 if os.path.exists(file_path):
@@ -108,17 +70,12 @@ class ApolloOrchestrator:
                 self.logger.warning(f"Failed to cleanup temp file {file_path}: {str(e)}")
     
     async def _start_realtime_publishing(self, task_id: str, interval: float = 1.0):
-        """
-        Start real-time publishing for a task (WebSocket enhancement).
-        Gracefully handles cases where WebSocket is not available.
-        """
         try:
             from app.utils.realtime_publisher import realtime_publisher
             await realtime_publisher.start_publishing(task_id, interval=interval)
             self.publish_log(task_id, "Started real-time publishing for task", "info")
             return True
         except ImportError:
-            # WebSocket not available, continue without it
             self.logger.debug(f"WebSocket not available for task {task_id}, continuing without real-time publishing")
             return False
         except Exception as e:
@@ -126,16 +83,11 @@ class ApolloOrchestrator:
             return False
     
     async def _stop_realtime_publishing(self, task_id: str):
-        """
-        Stop real-time publishing for a task (WebSocket enhancement).
-        Gracefully handles cases where WebSocket is not available.
-        """
         try:
             from app.utils.realtime_publisher import realtime_publisher
             await realtime_publisher.stop_publishing(task_id)
             self.publish_log(task_id, "Stopped real-time publishing for task", "info")
         except ImportError:
-            # WebSocket not available, nothing to stop
             pass
         except Exception as e:
             self.publish_log(task_id, f"Warning: Could not stop real-time publishing: {str(e)}", "warning")
@@ -151,28 +103,23 @@ class ApolloOrchestrator:
         scrape_pdfs_and_xls: bool = True,
         stop_scraper: bool = False
     ) -> Dict[str, Any]:
-        # Start real-time publishing for this task
         await self._start_realtime_publishing(task_id, interval=1.0)
-        
-        # Handle None values by replacing with infinity
+
         if max_links_to_scrape is None:
             max_links_to_scrape = float("inf")
         if max_pages_to_scrape is None:
             max_pages_to_scrape = float("inf")
         if depth_limit is None:
             depth_limit = float("inf")
-        
-        # Update task status
+
         task_manager.update_task_status(
             task_id,
             status="running",
             progress=0.0
         )
-        
-        # Log start of crawling workflow
+
         self.publish_log(task_id, f"Starting crawl workflow for {base_url}", "info")
-        
-        # If stop_scraper is True, check if there's a running crawler and stop it
+
         if stop_scraper:
             self.publish_log(task_id, "Stop signal received. Checking for running crawlers...", "info")
             running_tasks = task_manager.list_tasks(task_type="crawl", status="running")
@@ -181,40 +128,33 @@ class ApolloOrchestrator:
                     continue
                 
                 self.publish_log(task_id, f"Stopping crawler task {task['id']}...", "info")
-                # TODO: Implement a mechanism to stop running crawlers
             
             await self._stop_realtime_publishing(task_id)
             
             task_manager.update_task_status(task_id, status="completed", progress=100.0)
             return {"status": "stopped", "message": "Stop signal sent to all running crawlers"}
-        
-        # List of temporary files to cleanup
+
         temp_files = []
         
         try:
-            # Step 1: Crawling
             task_manager.update_task_status(
                 task_id,
                 status="crawling",
                 progress=5.0
             )
-            
-            # Generate unique filenames for temporary processing
+
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             crawl_id = f"{timestamp}_{base_url.replace('://', '_').replace('/', '_')[:30]}"
-            
-            # Define temporary file paths
+
             all_links_file = os.path.join(self.temp_dir, f"{crawl_id}_all_links.json")
             categorized_file = os.path.join(self.temp_dir, f"{crawl_id}_categorized.json")
             url_clusters_file = os.path.join(self.temp_dir, f"{crawl_id}_url_clusters.json")
             year_clusters_file = os.path.join(self.temp_dir, f"{crawl_id}_year_clusters.json")
             
             temp_files.extend([all_links_file, categorized_file, url_clusters_file, year_clusters_file])
-            
-            # Log the limits being used
+
             self.publish_log(task_id, f"Starting crawler for {base_url} with limits: max_links={max_links_to_scrape}, max_pages={max_pages_to_scrape}, depth_limit={depth_limit}", "info")
-            
-            # Define a callback for Apollo status updates
+
             def status_callback(status_data):
                 execution_time_seconds = status_data.get('execution_time_seconds', 0)
                 crawler_progress = status_data.get('progress', 0)
@@ -222,8 +162,7 @@ class ApolloOrchestrator:
                 if not hasattr(self, '_last_progress'):
                     self._last_progress = 5.0
                     self._last_update_time = time.time()
-                
-                # Calculate progress based on crawler limits
+
                 if (max_links_to_scrape == float("inf") or 
                     max_pages_to_scrape == float("inf") or 
                     depth_limit == float("inf")):
@@ -246,8 +185,7 @@ class ApolloOrchestrator:
                         progress = (crawler_progress / 100) * 40.0
                 
                 self._last_progress = progress
-                
-                # Prepare the crawl result
+
                 crawl_result = {
                     "crawl_results": {
                         "total_links_found": status_data.get('links_found', 0),
@@ -255,15 +193,13 @@ class ApolloOrchestrator:
                         "execution_time_seconds": execution_time_seconds
                     }
                 }
-                
-                # Update task status with progress and result
+
                 task_manager.update_task_status(
                     task_id,
                     progress=progress,
                     result=crawl_result
                 )
-                
-                # Log progress updates periodically
+
                 if status_data.get('pages_scraped', 0) % 2 == 0:
                     self.publish_log(
                         task_id,
@@ -271,8 +207,7 @@ class ApolloOrchestrator:
                         f"{status_data.get('links_found', 0)} links found, progress: {progress:.1f}%",
                         "info"
                     )
-            
-            # Create the crawler
+
             crawler = Apollo(
                 base_url=base_url,
                 output_file=all_links_file,
@@ -291,30 +226,23 @@ class ApolloOrchestrator:
                 inactivity_timeout=CRAWLER_INACTIVITY_TIMEOUT
             )
 
-            # Store the crawler instance for potential stopping
             setattr(self, f"crawler_{task_id}", crawler)
-            
-            # Register the status callback
+
             crawler.register_status_callback(status_callback)
-            
-            # Start the crawler
+
             self.publish_log(task_id, f"Starting crawler for {base_url}", "info")
             loop = asyncio.get_event_loop()
             crawl_result = await loop.run_in_executor(None, crawler.start)
-            
-            # CRITICAL FIX: Check if crawling was stopped - DO NOT save to database
+
             crawler_status = crawler.get_status()
             if crawler_status.get('was_stopped') or crawler_status.get('status') == 'stopped':
                 self.publish_log(task_id, "Crawling was stopped by user", "info")
-                
-                # Clean up crawler reference
+
                 if hasattr(self, f"crawler_{task_id}"):
                     delattr(self, f"crawler_{task_id}")
-                
-                # Clean up temp files
+
                 self.cleanup_temp_files(temp_files)
-                
-                # Update task status to stopped
+
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
@@ -326,25 +254,20 @@ class ApolloOrchestrator:
                         "stopped_gracefully": True
                     }
                 )
-                
-                # CRITICAL: Return early without saving to database
+
                 self.publish_log(task_id, "Crawling stopped. Results NOT saved to database.", "info")
                 await self._stop_realtime_publishing(task_id)
                 return task_manager.get_task_status(task_id)
-            
-            # CRITICAL FIX: Only proceed with processing if crawling completed successfully
+
             if not crawl_result or crawl_result.get('summary', {}).get('was_stopped', False):
                 error_msg = "Crawling did not complete successfully"
                 self.publish_log(task_id, error_msg, "error")
-                
-                # Clean up crawler reference
+
                 if hasattr(self, f"crawler_{task_id}"):
                     delattr(self, f"crawler_{task_id}")
-                
-                # Clean up temp files
+
                 self.cleanup_temp_files(temp_files)
-                
-                # Stop real-time publishing on error
+
                 await self._stop_realtime_publishing(task_id)
                 
                 task_manager.update_task_status(
@@ -353,29 +276,25 @@ class ApolloOrchestrator:
                     error=error_msg
                 )
                 return task_manager.get_task_status(task_id)
-            
-            # Log completion of crawling (only for completed status)
+
             self.publish_log(
                 task_id,
                 f"Crawling completed successfully. Found {crawl_result['summary']['total_links_found']} links, scraped {crawl_result['summary']['total_pages_scraped']} pages.",
                 "info"
             )
-            
-            # Update progress
+
             task_manager.update_task_status(
                 task_id,
                 progress=40.0,
                 result={"crawl_complete": True, "crawl_results": crawl_result["summary"]}
             )
-            
-            # Step 2: Link processing (only if crawling completed)
+
             task_manager.update_task_status(
                 task_id,
                 status="processing",
                 progress=45.0
             )
-            
-            # Create the link processor
+
             self.publish_log(task_id, "Processing links...", "info")
             processor = LinkProcessor(
                 input_file=all_links_file,
@@ -385,18 +304,15 @@ class ApolloOrchestrator:
                 social_media_keywords=SOCIAL_MEDIA_KEYWORDS,
                 bank_keywords=BANK_KEYWORDS
             )
-            
-            # Process links
+
             process_result = await loop.run_in_executor(None, processor.process)
-            
-            # Log link processing results
+
             self.publish_log(
                 task_id,
                 f"Link processing completed. Categorized {process_result['summary']['total_links']} links into {process_result['summary']['file_links_count']} file links, {process_result['summary']['bank_links_count']} bank links, {process_result['summary']['social_media_links_count']} social media links, and {process_result['summary']['misc_links_count']} miscellaneous links.",
                 "info"
             )
-            
-            # Update progress
+
             task_manager.update_task_status(
                 task_id,
                 progress=60.0,
@@ -406,15 +322,13 @@ class ApolloOrchestrator:
                     "process_results": process_result["summary"]
                 }
             )
-            
-            # Step 3: URL clustering
+
             task_manager.update_task_status(
                 task_id,
                 status="clustering",
                 progress=65.0
             )
-            
-            # Create the URL clusterer
+
             self.publish_log(task_id, "Clustering URLs...", "info")
             clusterer = URLClusterer(
                 input_file=categorized_file,
@@ -423,22 +337,18 @@ class ApolloOrchestrator:
                 path_depth=CLUSTER_PATH_DEPTH,
                 similarity_threshold=CLUSTER_SIMILARITY_THRESHOLD
             )
-            
-            # Cluster URLs
+
             cluster_result = await loop.run_in_executor(None, clusterer.cluster)
 
-            # Clean up crawler reference
             if hasattr(self, f"crawler_{task_id}"):
                 delattr(self, f"crawler_{task_id}")
-            
-            # Log URL clustering results
+
             self.publish_log(
                 task_id,
                 f"URL clustering completed. Identified {cluster_result['summary']['total_domains']} domains and {cluster_result['summary']['total_clusters']} clusters across {cluster_result['summary']['total_urls']} URLs.",
                 "info"
             )
-            
-            # Update progress
+
             task_manager.update_task_status(
                 task_id,
                 progress=80.0,
@@ -448,32 +358,27 @@ class ApolloOrchestrator:
                     "cluster_results": cluster_result["summary"]
                 }
             )
-            
-            # Step 4: Year extraction
+
             task_manager.update_task_status(
                 task_id,
                 status="year_extraction",
                 progress=85.0
             )
-            
-            # Create the year extractor
+
             self.publish_log(task_id, "Extracting years from file URLs...", "info")
             year_extractor = YearExtractor(
                 input_file=categorized_file,
                 output_file=year_clusters_file
             )
-            
-            # Extract years
+
             year_result = await loop.run_in_executor(None, year_extractor.process)
-            
-            # Log year extraction results
+
             self.publish_log(
                 task_id,
                 f"Year extraction completed. Identified {len(year_result)} distinct years across {sum(len(files) for files in year_result.values())} files.",
                 "info"
             )
-            
-            # Update progress
+
             task_manager.update_task_status(
                 task_id,
                 progress=90.0,
@@ -486,8 +391,7 @@ class ApolloOrchestrator:
                     }
                 }
             )
-            
-            # Step 5: SAVE TO DATABASE - ONLY FOR SUCCESSFULLY COMPLETED CRAWLS
+
             task_manager.update_task_status(
                 task_id,
                 status="saving_to_database",
@@ -497,7 +401,6 @@ class ApolloOrchestrator:
             self.publish_log(task_id, "Saving crawl results to database...", "info")
             
             try:
-                # Save to database - ONLY ON SUCCESS
                 await CrawlResultController.create_crawl_result(
                     task_id=task_id,
                     link_found=crawl_result["summary"]["total_links_found"],
@@ -511,11 +414,9 @@ class ApolloOrchestrator:
             except Exception as db_error:
                 error_msg = f"Failed to save crawl results to database: {str(db_error)}"
                 self.publish_log(task_id, error_msg, "error")
-                
-                # Clean up temp files before failing
+
                 self.cleanup_temp_files(temp_files)
-                
-                # Stop real-time publishing on error
+
                 await self._stop_realtime_publishing(task_id)
                 
                 task_manager.update_task_status(
@@ -524,8 +425,7 @@ class ApolloOrchestrator:
                     error=error_msg
                 )
                 return task_manager.get_task_status(task_id)
-            
-            # Update status to completed - ONLY FOR SUCCESSFULLY COMPLETED TASKS
+
             task_manager.update_task_status(
                 task_id,
                 status="completed",
@@ -540,21 +440,17 @@ class ApolloOrchestrator:
             )
             
             self.publish_log(task_id, f"Crawl workflow completed successfully for {base_url}. Results saved to database.", "info")
-            
-            # Clean up temporary files
+
             self.cleanup_temp_files(temp_files)
-            
-            # Return final status
+
             return task_manager.get_task_status(task_id)
         
         except Exception as e:
             error_msg = f"Error in crawl workflow: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
-            
-            # Clean up temp files on error
+
             self.cleanup_temp_files(temp_files)
-            
-            # Stop real-time publishing on error
+
             await self._stop_realtime_publishing(task_id)
             
             task_manager.update_task_status(
@@ -568,35 +464,29 @@ class ApolloOrchestrator:
 
         self.publish_log(task_id, f"Attempting to stop crawl task {task_id} gracefully...", "info")
 
-        # Get the task status
         task_status = task_manager.get_task_status(task_id)
         
         if not task_status:
             error_msg = f"Task {task_id} not found"
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
-        
-        # Check if task is a crawl task
+
         if task_status.get("type") != "crawl":
             error_msg = f"Task {task_id} is not a crawl task"
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
-        
-        # Check if task is already completed or failed
+
         current_status = task_status.get("status")
         if current_status in ["completed", "failed", "stopped"]:
             msg = f"Task {task_id} is already in '{current_status}' state"
             self.publish_log(task_id, msg, "info")
             return {"success": True, "message": msg}
-        
-        # Task is running, try to stop it
+
         try:
-            # Stop real-time publishing first
             try:
                 import asyncio
                 from app.utils.realtime_publisher import realtime_publisher
-                
-                # Run in async context if available
+
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
@@ -609,27 +499,22 @@ class ApolloOrchestrator:
                 self.publish_log(task_id, "Stopped real-time publishing for task", "info")
             except Exception as e:
                 self.publish_log(task_id, f"Warning: Could not stop real-time publishing: {str(e)}", "warning")
-            
-            # Get the crawler instance from context if available
+
             crawler_instance = getattr(self, f"crawler_{task_id}", None)
             
             if crawler_instance:
-                # Stop the crawler directly
                 self.publish_log(task_id, "Stopping crawler...", "info")
                 stop_result = crawler_instance.stop()
                 
                 if stop_result:
-                    # Clean up the crawler
                     cleanup_result = crawler_instance.cleanup()
-                    
-                    # Remove reference to the crawler
+
                     delattr(self, f"crawler_{task_id}")
-                    
-                    # Update task status to stopped
+
                     task_manager.update_task_status(
                         task_id,
                         status="stopped",
-                        progress=95.0,  # FIXED: Set to 95% for stopped tasks
+                        progress=95.0,  
                         result={
                             **task_status.get("result", {}),
                             "stopped_at": datetime.now().isoformat(),
@@ -647,14 +532,12 @@ class ApolloOrchestrator:
                     self.publish_log(task_id, "Failed to stop crawler", "error")
                     return {"success": False, "message": "Failed to stop crawler"}
             else:
-                # No direct crawler instance, just update the task status
                 self.publish_log(task_id, "No active crawler instance found, updating task status to stopped", "info")
-                
-                # Update task status to stopped
+
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
-                    progress=95.0,  # FIXED: Set to 95% for stopped tasks
+                    progress=95.0,  
                     result={
                         **task_status.get("result", {}),
                         "stopped_at": datetime.now().isoformat(),
@@ -671,8 +554,7 @@ class ApolloOrchestrator:
         except Exception as e:
             error_msg = f"Error stopping crawler: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
-            
-            # Try to update task status anyway
+
             task_manager.update_task_status(
                 task_id,
                 status="failed",
@@ -688,46 +570,26 @@ class ApolloOrchestrator:
         years: List[str] = None,
         crawl_task_id: str = None
     ) -> Dict[str, Any]:
-        """
-        Run the scraping and downloading workflow with enhanced progress tracking.
-        Now retrieves data from DATABASE instead of files.
-        Enhanced with real-time WebSocket updates while preserving all existing functionality.
-        
-        Args:
-            task_id: Task ID for tracking progress
-            cluster_ids: IDs of clusters to scrape
-            years: Years of files to download
-            crawl_task_id: Task ID of the crawl to use data from
-            
-        Returns:
-            Dictionary with scraping and downloading results
-        """
-        # Start real-time publishing for this task (WebSocket enhancement)
+
         await self._start_realtime_publishing(task_id, interval=1.5)
-        
-        # Initialize task status (existing functionality)
+
         task_manager.update_task_status(
             task_id,
             status="initializing",
             progress=0.0
         )
-        
-        # Log start of the workflow (existing functionality)
+
         self.publish_log(task_id, "Starting scrape and download workflow", "info")
         
         try:
-            # === INITIALIZATION PHASE (0-5%) === (existing functionality preserved)
-            # Update task status
             task_manager.update_task_status(
                 task_id,
                 status="checking_database",
                 progress=1.0
             )
-            
-            # Get crawl result from database (existing functionality)
+
             crawl_result = None
             if crawl_task_id:
-                # Get specific crawl result
                 crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
                 if not crawl_result:
                     error_msg = f"Crawl result for task {crawl_task_id} not found in database"
@@ -735,10 +597,8 @@ class ApolloOrchestrator:
                     raise Exception(error_msg)
                 self.publish_log(task_id, f"Using crawl result from task: {crawl_result.task_id}", "info")
             else:
-                # Get the most recent crawl result
                 crawl_results = await CrawlResultController.list_crawl_results()
                 if crawl_results:
-                    # Sort by created_at to get the most recent
                     crawl_results.sort(key=lambda x: x.created_at, reverse=True)
                     crawl_result = crawl_results[0]
                     self.publish_log(task_id, f"Using most recent crawl result: {crawl_result.task_id}", "info")
@@ -746,34 +606,26 @@ class ApolloOrchestrator:
                     error_msg = "No crawl results found in database"
                     self.publish_log(task_id, error_msg, "error")
                     raise Exception(error_msg)
-            
-            # Update progress after database check (existing functionality)
+
             task_manager.update_task_status(
                 task_id,
                 status="preparing",
                 progress=3.0
             )
-            
-            # === SCRAPING PHASE (5-60%) === (existing functionality preserved)
+
             if cluster_ids and crawl_result:
                 task_manager.update_task_status(
                     task_id,
                     status="scraping",
                     progress=5.0
                 )
-                
-                # Mark the crawl result as scraped (existing functionality)
+
                 await CrawlResultController.mark_as_scraped(crawl_result.task_id)
-                
-                # Define scraper output directory (existing functionality)
+
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
                 scrape_output_dir = os.path.join(self.scrape_dir, f"scrape_{timestamp}")
                 metadata_output_dir = os.path.join(self.metadata_dir, f"metadata_{timestamp}")
-                
-                # Create temporary clusters file for scraper compatibility (existing functionality)
                 temp_clusters_file = os.path.join(self.temp_dir, f"temp_clusters_{timestamp}.json")
-                
-                # Convert database clusters to file format for scraper (existing functionality)
                 clusters_dict = {}
                 for domain_name, domain_data in crawl_result.clusters.items():
                     clusters_dict[domain_name] = {
@@ -801,8 +653,7 @@ class ApolloOrchestrator:
                 
                 with open(temp_clusters_file, 'w', encoding='utf-8') as f:
                     json.dump(clusters_data, f, indent=2)
-                
-                # Create the scraper with task ID for progress tracking (existing functionality)
+
                 self.publish_log(task_id, f"Preparing to scrape {len(cluster_ids)} clusters", "info")
                 scraper = ClusterScraper(
                     json_file_path=temp_clusters_file,
@@ -810,8 +661,7 @@ class ApolloOrchestrator:
                     metadata_dir=metadata_output_dir,
                     expiry_days=EXPIRY_DAYS
                 )
-                
-                # Scrape the clusters with task ID for continuous progress updates (existing functionality)
+
                 self.publish_log(task_id, f"Starting scraping of clusters: {cluster_ids}", "info")
                 loop = asyncio.get_event_loop()
                 scrape_result = await loop.run_in_executor(
@@ -820,21 +670,18 @@ class ApolloOrchestrator:
                     cluster_ids, 
                     task_id
                 )
-                
-                # Clean up temporary file (existing functionality)
+
                 try:
                     os.remove(temp_clusters_file)
                 except:
                     pass
-                
-                # Log scraping results (existing functionality)
+
                 self.publish_log(
                     task_id,
                     f"Scraping completed. Scraped {scrape_result['pages_scraped']} pages from {len(scrape_result['clusters_scraped'])} clusters.",
                     "info"
                 )
-                
-                # Update progress to 60% (existing functionality)
+
                 task_manager.update_task_status(
                     task_id,
                     progress=60.0,
@@ -859,47 +706,37 @@ class ApolloOrchestrator:
                     }
                 )
             
-            # === TRANSITION PHASE (60-65%) === (existing functionality preserved)
-            # Add a brief "preparing download" phase for smoother transition
             if years and crawl_result:
                 task_manager.update_task_status(
                     task_id,
                     status="preparing_download",
                     progress=62.0
                 )
-                
-                # Log the transition
+
                 self.publish_log(task_id, "Scraping phase complete. Preparing for download phase...", "info")
-                
-                # Short sleep to ensure status updates are visible
+
                 await asyncio.sleep(0.5)
-            
-            # === DOWNLOADING PHASE (65-90%) === (existing functionality preserved)
+
             if years and crawl_result:
                 task_manager.update_task_status(
                     task_id,
                     status="downloading",
                     progress=65.0
                 )
-                
-                # Define download output directory (existing functionality)
+
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
                 download_output_dir = os.path.join(self.download_dir, f"download_{timestamp}")
-                
-                # Create temporary year clusters file for downloader compatibility (existing functionality)
                 temp_year_file = os.path.join(self.temp_dir, f"temp_years_{timestamp}.json")
                 
                 with open(temp_year_file, 'w', encoding='utf-8') as f:
                     json.dump(crawl_result.yearclusters, f, indent=2)
-                
-                # Create the downloader with task ID for progress tracking (existing functionality)
+
                 self.publish_log(task_id, f"Preparing to download files for years: {years}", "info")
                 downloader = FileDownloader(
                     max_workers=MAX_DOWNLOAD_WORKERS,
                     timeout=CRAWLER_TIMEOUT
                 )
-                
-                # Download the files with task ID for continuous progress updates (existing functionality)
+
                 self.publish_log(task_id, f"Starting download of files for years: {years}", "info")
                 loop = asyncio.get_event_loop()
                 download_result = await loop.run_in_executor(
@@ -910,21 +747,18 @@ class ApolloOrchestrator:
                     download_output_dir,
                     task_id
                 )
-                
-                # Clean up temporary file (existing functionality)
+
                 try:
                     os.remove(temp_year_file)
                 except:
                     pass
-                
-                # Log downloading results (existing functionality)
+
                 self.publish_log(
                     task_id,
                     f"File downloading completed. Successfully downloaded {download_result['successful']} files, failed to download {download_result['failed']} files.",
                     "info"
                 )
-                
-                # Update progress to 90% (existing functionality)
+
                 task_manager.update_task_status(
                     task_id,
                     progress=90.0,
@@ -949,8 +783,7 @@ class ApolloOrchestrator:
                         "download_skipped": True
                     }
                 )
-            
-            # === FINALIZATION PHASE (90-100%) === (existing functionality preserved)
+
             task_manager.update_task_status(
                 task_id,
                 status="finalizing",
@@ -958,11 +791,9 @@ class ApolloOrchestrator:
             )
             
             self.publish_log(task_id, "Finalizing workflow and generating summary...", "info")
-            
-            # Add a brief delay to show the finalizing step (existing functionality)
+
             await asyncio.sleep(0.5)
-            
-            # Update status to completed (existing functionality)
+
             task_manager.update_task_status(
                 task_id,
                 status="completed",
@@ -971,18 +802,12 @@ class ApolloOrchestrator:
             
             self.publish_log(task_id, "Scrape and download workflow completed successfully", "info")
             
-            # Real-time publisher will auto-stop when task completes (WebSocket enhancement)
-            # No need to manually stop here as it will be handled automatically
-            
-            # Return final status (existing functionality)
             return task_manager.get_task_status(task_id)
         
         except Exception as e:
             error_msg = f"Error in scrape/download workflow: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
             self.publish_log(task_id, traceback.format_exc(), "error")
-            
-            # Stop real-time publishing on error (WebSocket enhancement)
             await self._stop_realtime_publishing(task_id)
             
             task_manager.update_task_status(
@@ -991,10 +816,8 @@ class ApolloOrchestrator:
                 error=error_msg
             )
             return task_manager.get_task_status(task_id)
-    
-    # === ALL REMAINING METHODS PRESERVED EXACTLY AS THEY WERE === (existing functionality)
+
     async def get_available_clusters(self, crawl_task_id: str = None) -> List[Dict[str, Any]]:
-        """Get available clusters from DATABASE (existing functionality preserved)"""
         try:
             crawl_result = None
             if crawl_task_id:
@@ -1032,23 +855,12 @@ class ApolloOrchestrator:
             return []
     
     async def get_available_years(self, crawl_task_id: str = None) -> List[Dict[str, Any]]:
-        """
-        Get available years for downloading from DATABASE (existing functionality preserved).
-        
-        Args:
-            crawl_task_id: Task ID to get years for (if None, gets most recent)
-            
-        Returns:
-            List of dictionaries with year information
-        """
         try:
             crawl_result = None
             
             if crawl_task_id:
-                # Get specific crawl result
                 crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
             else:
-                # Get the most recent crawl result
                 crawl_results = await CrawlResultController.list_crawl_results()
                 if crawl_results:
                     crawl_results.sort(key=lambda x: x.created_at, reverse=True)
@@ -1056,18 +868,15 @@ class ApolloOrchestrator:
             
             if not crawl_result or not crawl_result.yearclusters:
                 return []
-            
-            # Create a list of available years
+
             years_info = []
-            
-            # Go through years
+
             for year, files in crawl_result.yearclusters.items():
                 years_info.append({
                     "year": year,
                     "files_count": len(files)
                 })
-            
-            # Sort by year (newest first, but "No Year" at the end)
+
             return sorted(
                 years_info,
                 key=lambda y: (y["year"] == "No Year", y["year"]),
@@ -1079,7 +888,6 @@ class ApolloOrchestrator:
             return []
         
     async def get_cluster_by_id(self, cluster_id: str, crawl_task_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get cluster by ID from DATABASE (existing functionality preserved)"""
         try:
             crawl_result = None
             if crawl_task_id:
@@ -1128,24 +936,12 @@ class ApolloOrchestrator:
             return None
         
     async def get_year_by_id(self, year: str, crawl_task_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """
-        Get year by ID from DATABASE (existing functionality preserved).
-        
-        Args:
-            year: Year to find
-            crawl_task_id: Task ID to get year from (if None, gets most recent)
-            
-        Returns:
-            Year data if found, None otherwise
-        """
         try:
             crawl_result = None
             
             if crawl_task_id:
-                # Get specific crawl result
                 crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
             else:
-                # Get the most recent crawl result
                 crawl_results = await CrawlResultController.list_crawl_results()
                 if crawl_results:
                     crawl_results.sort(key=lambda x: x.created_at, reverse=True)
@@ -1174,43 +970,26 @@ class ApolloOrchestrator:
     task_id: str,
     cities: List[str] = None
 ) -> Dict[str, Any]:
-        """
-        Run the complete deal scraping workflow with enhanced progress tracking.
-        Enhanced with real-time WebSocket updates while preserving all existing functionality.
-        
-        Args:
-            task_id: Task ID for tracking progress
-            cities: List of cities to scrape (if None or empty, fetch all available cities)
-            
-        Returns:
-            Dictionary with deal scraping results
-        """
-        # Start real-time publishing for this task (WebSocket enhancement)
         await self._start_realtime_publishing(task_id, interval=2.0)
-        
-        # Initialize task status
+
         task_manager.update_task_status(
             task_id,
             status="initializing",
             progress=0.0
         )
-        
-        # Log start of the workflow
+
         self.publish_log(task_id, "Starting deal scraping workflow", "info")
         
         try:
-            # === INITIALIZATION PHASE (0-5%) ===
             task_manager.update_task_status(
                 task_id,
                 status="initializing",
                 progress=5.0
             )
-            
-            # Define output directory with timestamp
+
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             deal_output_dir = os.path.join(self.base_directory, "deals", f"deals_{timestamp}")
-            
-            # Create the deal scrapper service
+
             self.publish_log(task_id, "Initializing deal scrapper service", "info")
             deal_scrapper = DealScrapperService(
                 country="Pakistan",
@@ -1220,11 +999,9 @@ class ApolloOrchestrator:
                 request_delay=0.5,
                 progress_update_interval=5
             )
-            
-            # Store the deal scrapper instance for potential stopping
+
             setattr(self, f"deal_scrapper_{task_id}", deal_scrapper)
-            
-            # Update task status
+
             task_manager.update_task_status(
                 task_id,
                 status="scraping_deals",
@@ -1235,11 +1012,9 @@ class ApolloOrchestrator:
                     "output_directory": deal_output_dir
                 }
             )
-            
-            # === DEAL SCRAPING PHASE (10-95%) ===
+
             self.publish_log(task_id, f"Starting deal scraping for cities: {cities or 'all available'}", "info")
-            
-            # Run the deal scraping workflow
+
             loop = asyncio.get_event_loop()
             scraping_result = await loop.run_in_executor(
                 None,
@@ -1247,17 +1022,14 @@ class ApolloOrchestrator:
                 cities,
                 task_id
             )
-            
-            # Check if scraping was successful
+
             if scraping_result["status"] == "failed":
                 error_msg = scraping_result.get("error", "Deal scraping failed")
                 self.publish_log(task_id, error_msg, "error")
-                
-                # Clean up deal scrapper reference
+
                 if hasattr(self, f"deal_scrapper_{task_id}"):
                     delattr(self, f"deal_scrapper_{task_id}")
-                
-                # Stop real-time publishing on error
+
                 await self._stop_realtime_publishing(task_id)
                 
                 task_manager.update_task_status(
@@ -1266,16 +1038,13 @@ class ApolloOrchestrator:
                     error=error_msg
                 )
                 return task_manager.get_task_status(task_id)
-            
-            # Check if scraping was stopped
+
             if scraping_result["status"] == "stopped":
                 self.publish_log(task_id, "Deal scraping was stopped by user", "info")
-                
-                # Clean up deal scrapper reference
+
                 if hasattr(self, f"deal_scrapper_{task_id}"):
                     delattr(self, f"deal_scrapper_{task_id}")
-                
-                # Update task status
+
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
@@ -1286,16 +1055,14 @@ class ApolloOrchestrator:
                     }
                 )
                 return task_manager.get_task_status(task_id)
-            
-            # Log completion of scraping
+
             self.publish_log(
                 task_id,
                 f"Deal scraping completed. Processed {scraping_result['cities_processed']} cities, "
                 f"{scraping_result['restaurants_processed']} restaurants, found {scraping_result['deals_found']} deals.",
                 "info"
             )
-            
-            # Update progress to 95%
+
             task_manager.update_task_status(
                 task_id,
                 status="saving_to_database",
@@ -1305,38 +1072,32 @@ class ApolloOrchestrator:
                     "deal_scrape_results": scraping_result
                 }
             )
-            
-            # === SAVE TO DATABASE (95-100%) ===
+
             self.publish_log(task_id, "Saving deal scraping results to database...", "info")
             
             try:
-                # Prepare data for database
                 cities_requested = cities or []
                 cities_processed = scraping_result["cities_processed"]
                 restaurants_processed = scraping_result["restaurants_processed"] 
                 deals_processed = scraping_result["deals_found"]
                 execution_time_seconds = scraping_result["execution_time_seconds"]
-                
-                # Convert restaurants data for database storage
                 restaurants_data = []
                 summary_by_city = {}
-                
-                # Process the cities data from scraping result
                 cities_data = scraping_result.get("cities_data", {})
                 for city, restaurants in cities_data.items():
                     city_restaurants = 0
                     city_deals = 0
                     
                     for restaurant_name, deals in restaurants.items():
-                        if deals:  # Only include restaurants with deals
+                        if deals: 
                             restaurant_data = {
                                 "name": restaurant_name,
                                 "location": city,
                                 "city": city,
-                                "cuisine_type": None,  # Not available from API
-                                "rating": None,        # Not available from API
+                                "cuisine_type": None,  
+                                "rating": None,        
                                 "deals": deals,
-                                "contact_info": None,  # Not available from API
+                                "contact_info": None,  
                                 "scraped_at": datetime.now()
                             }
                             restaurants_data.append(restaurant_data)
@@ -1348,8 +1109,7 @@ class ApolloOrchestrator:
                             "restaurants": city_restaurants,
                             "deals": city_deals
                         }
-                
-                # Save to database - ONLY ON SUCCESS
+
                 await DealScrapeController.save_deal_result(
                     task_id=task_id,
                     cities_requested=cities_requested,
@@ -1366,12 +1126,10 @@ class ApolloOrchestrator:
             except Exception as db_error:
                 error_msg = f"Failed to save deal scraping results to database: {str(db_error)}"
                 self.publish_log(task_id, error_msg, "error")
-                
-                # Clean up deal scrapper reference
+
                 if hasattr(self, f"deal_scrapper_{task_id}"):
                     delattr(self, f"deal_scrapper_{task_id}")
-                
-                # Stop real-time publishing on error
+
                 await self._stop_realtime_publishing(task_id)
                 
                 task_manager.update_task_status(
@@ -1381,8 +1139,6 @@ class ApolloOrchestrator:
                 )
                 return task_manager.get_task_status(task_id)
             
-            # === COMPLETION (100%) ===
-            # Update status to completed
             task_manager.update_task_status(
                 task_id,
                 status="completed",
@@ -1395,27 +1151,20 @@ class ApolloOrchestrator:
             )
             
             self.publish_log(task_id, "Deal scraping workflow completed successfully. Results saved to database.", "info")
-            
-            # Clean up deal scrapper reference
+
             if hasattr(self, f"deal_scrapper_{task_id}"):
                 delattr(self, f"deal_scrapper_{task_id}")
-            
-            # Real-time publisher will auto-stop when task completes
-            # No need to manually stop here as it will be handled automatically
-            
-            # Return final status
+
             return task_manager.get_task_status(task_id)
             
         except Exception as e:
             error_msg = f"Error in deal scraping workflow: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
             self.publish_log(task_id, traceback.format_exc(), "error")
-            
-            # Clean up deal scrapper reference
+
             if hasattr(self, f"deal_scrapper_{task_id}"):
                 delattr(self, f"deal_scrapper_{task_id}")
-            
-            # Stop real-time publishing on error
+
             await self._stop_realtime_publishing(task_id)
             
             task_manager.update_task_status(
@@ -1426,47 +1175,31 @@ class ApolloOrchestrator:
             return task_manager.get_task_status(task_id)
 
     def stop_deal_scraping(self, task_id: str) -> Dict[str, Any]:
-        """
-        Stop a running deal scraping process gracefully with proper cleanup.
-        Enhanced with real-time publishing cleanup while preserving existing functionality.
-
-        Args:
-            task_id: ID of the task to stop
-        
-        Returns:
-            Dictionary with stop result
-        """
         self.publish_log(task_id, f"Attempting to stop deal scraping task {task_id} gracefully...", "info")
 
-        # Get the task status
         task_status = task_manager.get_task_status(task_id)
         
         if not task_status:
             error_msg = f"Task {task_id} not found"
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
-        
-        # Check if task is a deal scraping task
+
         if task_status.get("type") != "deal_scraping":
             error_msg = f"Task {task_id} is not a deal scraping task"
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
-        
-        # Check if task is already completed or failed
+
         current_status = task_status.get("status")
         if current_status in ["completed", "failed", "stopped"]:
             msg = f"Task {task_id} is already in '{current_status}' state"
             self.publish_log(task_id, msg, "info")
             return {"success": True, "message": msg}
-        
-        # Task is running, try to stop it
+
         try:
-            # Stop real-time publishing first
             try:
                 import asyncio
                 from app.utils.realtime_publisher import realtime_publisher
-                
-                # Run in async context if available
+
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
@@ -1474,26 +1207,21 @@ class ApolloOrchestrator:
                     else:
                         loop.run_until_complete(realtime_publisher.stop_publishing(task_id))
                 except RuntimeError:
-                    # No event loop running, create a new one for this operation
                     asyncio.run(realtime_publisher.stop_publishing(task_id))
                     
                 self.publish_log(task_id, "Stopped real-time publishing for task", "info")
             except Exception as e:
                 self.publish_log(task_id, f"Warning: Could not stop real-time publishing: {str(e)}", "warning")
-            
-            # Get the deal scrapper instance from context if available
+
             deal_scrapper_instance = getattr(self, f"deal_scrapper_{task_id}", None)
             
             if deal_scrapper_instance:
-                # Stop the deal scrapper directly
                 self.publish_log(task_id, "Stopping deal scrapper...", "info")
                 stop_result = deal_scrapper_instance.stop()
                 
                 if stop_result:
-                    # Remove reference to the deal scrapper
                     delattr(self, f"deal_scrapper_{task_id}")
-                    
-                    # Update task status
+
                     task_manager.update_task_status(
                         task_id,
                         status="stopped",
@@ -1515,10 +1243,8 @@ class ApolloOrchestrator:
                     self.publish_log(task_id, "Failed to stop deal scrapper", "error")
                     return {"success": False, "message": "Failed to stop deal scrapper"}
             else:
-                # No direct deal scrapper instance, just update the task status
                 self.publish_log(task_id, "No active deal scrapper instance found, updating task status to stopped", "info")
-                
-                # Update task status to stopped
+
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
@@ -1539,8 +1265,7 @@ class ApolloOrchestrator:
         except Exception as e:
             error_msg = f"Error stopping deal scrapper: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
-            
-            # Try to update task status anyway
+
             task_manager.update_task_status(
                 task_id,
                 status="failed",
@@ -1559,36 +1284,27 @@ class ApolloOrchestrator:
         access_token: str,
         page_id: str
     ) -> Dict[str, Any]:
-        """
-        Run the complete Facebook scraping workflow with enhanced progress tracking.
-        CRITICAL FIX: Only save to database when status is "completed", not "stopped"
-        """
-        # Start real-time publishing for this task (WebSocket enhancement)
+
         await self._start_realtime_publishing(task_id, interval=2.0)
-        
-        # Initialize task status
+
         task_manager.update_task_status(
             task_id,
             status="initializing",
             progress=0.0
         )
-        
-        # Log start of the workflow
+
         self.publish_log(task_id, "Starting Facebook scraping workflow", "info")
         
         try:
-            # === INITIALIZATION PHASE (0-5%) ===
             task_manager.update_task_status(
                 task_id,
                 status="initializing",
                 progress=5.0
             )
-            
-            # Define output directory with timestamp
+
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             facebook_output_dir = os.path.join(self.base_directory, "facebook", f"facebook_{timestamp}")
-            
-            # Create the Facebook scrapping service
+
             self.publish_log(task_id, "Initializing Facebook scrapping service", "info")
             facebook_scrapper = FacebookScrapingService(
                 access_token=access_token,
@@ -1596,11 +1312,9 @@ class ApolloOrchestrator:
                 output_dir=facebook_output_dir,
                 progress_update_interval=5
             )
-            
-            # Store the Facebook scrapper instance for potential stopping
+
             setattr(self, f"facebook_scrapper_{task_id}", facebook_scrapper)
-            
-            # Update task status
+
             task_manager.update_task_status(
                 task_id,
                 status="scraping_posts",
@@ -1612,11 +1326,9 @@ class ApolloOrchestrator:
                     "output_directory": facebook_output_dir
                 }
             )
-            
-            # === FACEBOOK SCRAPING PHASE (10-95%) ===
+
             self.publish_log(task_id, f"Starting Facebook scraping for keywords: {keywords} (last {days} days)", "info")
-            
-            # Run the Facebook scraping workflow
+
             loop = asyncio.get_event_loop()
             scraping_result = await loop.run_in_executor(
                 None,
@@ -1625,17 +1337,14 @@ class ApolloOrchestrator:
                 days,
                 task_id
             )
-            
-            # Check if scraping failed
+
             if scraping_result["status"] == "failed":
                 error_msg = scraping_result.get("error", "Facebook scraping failed")
                 self.publish_log(task_id, error_msg, "error")
-                
-                # Clean up Facebook scrapper reference
+
                 if hasattr(self, f"facebook_scrapper_{task_id}"):
                     delattr(self, f"facebook_scrapper_{task_id}")
-                
-                # Stop real-time publishing on error
+
                 await self._stop_realtime_publishing(task_id)
                 
                 task_manager.update_task_status(
@@ -1644,16 +1353,13 @@ class ApolloOrchestrator:
                     error=error_msg
                 )
                 return task_manager.get_task_status(task_id)
-            
-            # CRITICAL FIX: Check if scraping was stopped - DO NOT save to database
+
             if scraping_result["status"] == "stopped":
                 self.publish_log(task_id, "Facebook scraping was stopped by user", "info")
-                
-                # Clean up Facebook scrapper reference
+
                 if hasattr(self, f"facebook_scrapper_{task_id}"):
                     delattr(self, f"facebook_scrapper_{task_id}")
-                
-                # Update task status to stopped
+
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
@@ -1665,21 +1371,17 @@ class ApolloOrchestrator:
                         "stopped_gracefully": True
                     }
                 )
-                
-                # CRITICAL: Return early without saving to database
+
                 self.publish_log(task_id, "Facebook scraping stopped. Results NOT saved to database.", "info")
                 return task_manager.get_task_status(task_id)
-            
-            # CRITICAL FIX: Only proceed to save to database if status is "completed"
+
             if scraping_result["status"] != "completed":
                 error_msg = f"Unexpected scraping status: {scraping_result['status']}"
                 self.publish_log(task_id, error_msg, "error")
-                
-                # Clean up Facebook scrapper reference
+
                 if hasattr(self, f"facebook_scrapper_{task_id}"):
                     delattr(self, f"facebook_scrapper_{task_id}")
-                
-                # Stop real-time publishing on error
+
                 await self._stop_realtime_publishing(task_id)
                 
                 task_manager.update_task_status(
@@ -1688,16 +1390,14 @@ class ApolloOrchestrator:
                     error=error_msg
                 )
                 return task_manager.get_task_status(task_id)
-            
-            # Log completion of scraping (only for completed status)
+
             self.publish_log(
                 task_id,
                 f"Facebook scraping completed successfully. Processed {scraping_result['posts_processed']} posts, "
                 f"found {scraping_result['posts_found']} matching posts.",
                 "info"
             )
-            
-            # Update progress to 95%
+
             task_manager.update_task_status(
                 task_id,
                 status="saving_to_database",
@@ -1707,12 +1407,10 @@ class ApolloOrchestrator:
                     "facebook_scrape_results": scraping_result
                 }
             )
-            
-            # === SAVE TO DATABASE (95-100%) - ONLY FOR COMPLETED TASKS ===
+
             self.publish_log(task_id, "Saving Facebook scraping results to database...", "info")
             
             try:
-                # Prepare data for database
                 keywords_requested = keywords
                 days_requested = days
                 posts_processed = scraping_result["posts_processed"]
@@ -1721,11 +1419,8 @@ class ApolloOrchestrator:
                 execution_time_seconds = scraping_result["execution_time_seconds"]
                 output_directory = scraping_result["output_directory"]
                 date_range = scraping_result["date_range"]
-                
-                # Convert posts data for database storage
                 posts_data = []
-                
-                # Process the posts data from scraping result if available
+
                 for post in scraping_result.get("posts_data", []):
                     post_data = {
                         "post_id": post.get("id", ""),
@@ -1736,8 +1431,7 @@ class ApolloOrchestrator:
                         "scraped_at": datetime.now()
                     }
                     posts_data.append(post_data)
-                
-                # Save to database - ONLY ON SUCCESSFUL COMPLETION
+
                 await self.save_facebook_result(
                     task_id=task_id,
                     keywords_requested=keywords_requested,
@@ -1756,12 +1450,10 @@ class ApolloOrchestrator:
             except Exception as db_error:
                 error_msg = f"Failed to save Facebook scraping results to database: {str(db_error)}"
                 self.publish_log(task_id, error_msg, "error")
-                
-                # Clean up Facebook scrapper reference
+
                 if hasattr(self, f"facebook_scrapper_{task_id}"):
                     delattr(self, f"facebook_scrapper_{task_id}")
-                
-                # Stop real-time publishing on error
+
                 await self._stop_realtime_publishing(task_id)
                 
                 task_manager.update_task_status(
@@ -1771,8 +1463,6 @@ class ApolloOrchestrator:
                 )
                 return task_manager.get_task_status(task_id)
             
-            # === COMPLETION (100%) - ONLY FOR SUCCESSFULLY COMPLETED TASKS ===
-            # Update status to completed
             task_manager.update_task_status(
                 task_id,
                 status="completed",
@@ -1785,24 +1475,20 @@ class ApolloOrchestrator:
             )
             
             self.publish_log(task_id, "Facebook scraping workflow completed successfully. Results saved to database.", "info")
-            
-            # Clean up Facebook scrapper reference
+
             if hasattr(self, f"facebook_scrapper_{task_id}"):
                 delattr(self, f"facebook_scrapper_{task_id}")
-            
-            # Return final status
+
             return task_manager.get_task_status(task_id)
             
         except Exception as e:
             error_msg = f"Error in Facebook scraping workflow: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
             self.publish_log(task_id, traceback.format_exc(), "error")
-            
-            # Clean up Facebook scrapper reference
+
             if hasattr(self, f"facebook_scrapper_{task_id}"):
                 delattr(self, f"facebook_scrapper_{task_id}")
-            
-            # Stop real-time publishing on error
+
             await self._stop_realtime_publishing(task_id)
             
             task_manager.update_task_status(
@@ -1813,41 +1499,31 @@ class ApolloOrchestrator:
             return task_manager.get_task_status(task_id)
 
     def stop_facebook_scraping(self, task_id: str) -> Dict[str, Any]:
-        """
-        Stop a running Facebook scraping process gracefully with proper cleanup.
-        FIXED: Enhanced stop mechanism with better status handling
-        """
         self.publish_log(task_id, f"Attempting to stop Facebook scraping task {task_id} gracefully...", "info")
 
-        # Get the task status
         task_status = task_manager.get_task_status(task_id)
         
         if not task_status:
             error_msg = f"Task {task_id} not found"
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
-        
-        # Check if task is a Facebook scraping task
+
         if task_status.get("type") != "facebook_scraping":
             error_msg = f"Task {task_id} is not a Facebook scraping task"
             self.publish_log(task_id, error_msg, "error")
             return {"success": False, "message": error_msg}
-        
-        # Check if task is already completed or failed
+
         current_status = task_status.get("status")
         if current_status in ["completed", "failed", "stopped"]:
             msg = f"Task {task_id} is already in '{current_status}' state"
             self.publish_log(task_id, msg, "info")
             return {"success": True, "message": msg}
-        
-        # Task is running, try to stop it
+
         try:
-            # Stop real-time publishing first
             try:
                 import asyncio
                 from app.utils.realtime_publisher import realtime_publisher
-                
-                # Run in async context if available
+
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
@@ -1855,26 +1531,21 @@ class ApolloOrchestrator:
                     else:
                         loop.run_until_complete(realtime_publisher.stop_publishing(task_id))
                 except RuntimeError:
-                    # No event loop running, create a new one for this operation
                     asyncio.run(realtime_publisher.stop_publishing(task_id))
                     
                 self.publish_log(task_id, "Stopped real-time publishing for task", "info")
             except Exception as e:
                 self.publish_log(task_id, f"Warning: Could not stop real-time publishing: {str(e)}", "warning")
-            
-            # Get the Facebook scrapper instance from context if available
+
             facebook_scrapper_instance = getattr(self, f"facebook_scrapper_{task_id}", None)
             
             if facebook_scrapper_instance:
-                # Stop the Facebook scrapper directly
                 self.publish_log(task_id, "Stopping Facebook scrapper...", "info")
                 stop_result = facebook_scrapper_instance.stop()
                 
                 if stop_result:
-                    # Remove reference to the Facebook scrapper
                     delattr(self, f"facebook_scrapper_{task_id}")
                     
-                    # Update task status
                     task_manager.update_task_status(
                         task_id,
                         status="stopped",
@@ -1896,10 +1567,8 @@ class ApolloOrchestrator:
                     self.publish_log(task_id, "Failed to stop Facebook scrapper", "error")
                     return {"success": False, "message": "Failed to stop Facebook scrapper"}
             else:
-                # No direct Facebook scrapper instance, just update the task status
                 self.publish_log(task_id, "No active Facebook scrapper instance found, updating task status to stopped", "info")
-                
-                # Update task status to stopped
+
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
@@ -1920,8 +1589,7 @@ class ApolloOrchestrator:
         except Exception as e:
             error_msg = f"Error stopping Facebook scrapper: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
-            
-            # Try to update task status anyway
+
             task_manager.update_task_status(
                 task_id,
                 status="failed",
@@ -1943,47 +1611,35 @@ class ApolloOrchestrator:
         date_range: Dict[str, str],
         posts_data: List[Dict[str, Any]]
     ) -> None:
-        """
-        Save Facebook scraping results to database.
-        FIXED: Enhanced validation and error handling
-        """
         try:
-            # Import here to avoid circular imports
             from app.models.database.fb_scrape.fb_result_model import FacebookResult, FacebookPostData
             
             self.logger.info(f"Attempting to save Facebook result for task {task_id}")
             self.logger.info(f"Posts data count: {len(posts_data)}")
-            
-            # FIXED: Correct Beanie query syntax
+
             existing_result = await FacebookResult.find_one({"task_id": task_id})
             if existing_result:
                 self.logger.warning(f"Facebook result for task {task_id} already exists, skipping save")
                 return
-            
-            # Get the original task creation time from task manager
+
             task_status = task_manager.get_task_status(task_id)
             if task_status and task_status.get('created_at'):
                 try:
-                    # Parse the ISO format datetime string from task manager
                     original_created_at = datetime.fromisoformat(task_status['created_at'].replace('Z', '+00:00'))
-                    # Convert to UTC datetime (remove timezone info for MongoDB)
                     original_created_at = original_created_at.replace(tzinfo=None)
                     self.logger.info(f"Using original creation time: {original_created_at}")
                 except Exception as dt_error:
                     self.logger.warning(f"Error parsing creation time: {dt_error}, using current time")
                     original_created_at = datetime.utcnow()
             else:
-                # Fallback to current time if we can't get original creation time
                 self.logger.warning(f"Could not get original creation time for task {task_id}, using current time")
                 original_created_at = datetime.utcnow()
             
-            # FIXED: Convert posts data to FacebookPostData objects
             processed_posts_data = []
             for post in posts_data:
                 try:
-                    # Create FacebookPostData object with proper field mapping
                     post_obj = FacebookPostData(
-                        post_id=post.get("post_id", post.get("id", "unknown")),  # Handle both field names
+                        post_id=post.get("post_id", post.get("id", "unknown")),
                         message=post.get("message", ""),
                         created_time=post.get("created_time", ""),
                         category=post.get("category", "other"),
@@ -1996,8 +1652,7 @@ class ApolloOrchestrator:
                     continue
             
             self.logger.info(f"Successfully processed {len(processed_posts_data)} posts for database")
-            
-            # Validate required fields
+
             if not task_id or not isinstance(task_id, str):
                 raise ValueError("task_id must be a non-empty string")
             if not isinstance(keywords_requested, list):
@@ -2006,8 +1661,7 @@ class ApolloOrchestrator:
                 raise ValueError("days_requested must be a positive integer")
             if not isinstance(posts_processed, int) or posts_processed < 0:
                 raise ValueError("posts_processed must be a non-negative integer")
-            
-            # Create new result with correct timestamps
+
             facebook_result = FacebookResult(
                 task_id=task_id,
                 keywords_requested=keywords_requested,
@@ -2018,14 +1672,13 @@ class ApolloOrchestrator:
                 execution_time_seconds=execution_time_seconds,
                 output_directory=output_directory,
                 date_range=date_range or {},
-                posts_data=processed_posts_data,  # Use FacebookPostData objects
+                posts_data=processed_posts_data,  
                 created_at=original_created_at,
                 completed_at=datetime.utcnow()
             )
             
             self.logger.info(f"Created FacebookResult object, attempting to save to database...")
-            
-            # Attempt to save with retry logic
+
             max_retries = 3
             for attempt in range(max_retries):
                 try:
@@ -2037,7 +1690,7 @@ class ApolloOrchestrator:
                     self.logger.error(f"Attempt {attempt + 1} failed to insert Facebook result: {str(insert_error)}")
                     if attempt == max_retries - 1:
                         raise insert_error
-                    await asyncio.sleep(1)  # Wait 1 second before retry
+                    await asyncio.sleep(1)  
             
         except Exception as e:
             self.logger.error(f"Error saving Facebook result for task {task_id}: {str(e)}")
@@ -2047,5 +1700,4 @@ class ApolloOrchestrator:
             self.logger.error(f"Full traceback: {traceback.format_exc()}")
             raise Exception(f"Failed to save Facebook result: {str(e)}")
 
-# Create a global orchestrator instance (existing functionality preserved)
 orchestrator = ApolloOrchestrator()

@@ -11,24 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 class DealScrapeController:
-    """
-    Controller for handling deal scraping operations.
-    Follows the same patterns as CrawlController and ScrapeController.
-    """
     
     @staticmethod
     async def start_deal_scraping(cities: List[str]) -> Dict[str, Any]:
-        """
-        Start a new deal scraping task.
-        
-        Args:
-            cities: List of cities to scrape (empty list means fetch all cities)
-            
-        Returns:
-            Dictionary with task information
-        """
         try:
-            # Create task in task manager
             task_id = task_manager.create_task(
                 task_type="deal_scraping",
                 params={
@@ -39,8 +25,7 @@ class DealScrapeController:
             )
             
             task_status = task_manager.get_task_status(task_id)
-            
-            # Start real-time publishing for this task
+
             try:
                 await realtime_publisher.start_publishing(task_id, interval=2.0)
                 logger.info(f"Started real-time publishing for deal scraping task {task_id}")
@@ -65,15 +50,6 @@ class DealScrapeController:
     
     @staticmethod
     async def get_deal_scraping_status(task_id: str) -> Dict[str, Any]:
-        """
-        Get the status of a deal scraping task.
-        
-        Args:
-            task_id: Task ID to get status for
-            
-        Returns:
-            Dictionary with task status information
-        """
         try:
             task_status = task_manager.get_task_status(task_id)
             
@@ -88,34 +64,27 @@ class DealScrapeController:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Task {task_id} is not a deal scraping task"
                 )
-            
-            # Extract progress data from results
+
             result = task_status.get("result", {})
             current_status = task_status.get("status", "unknown")
-            
-            # Get partial results for ongoing tasks
+
             partial_results = result.get("deal_scrape_partial_results", {})
-            
-            # Get completed results
+
             completed_results = result.get("deal_scrape_results", {})
-            
-            # Determine which results to use
+
             if current_status in ["running", "initializing", "fetching_cities", "scraping_deals"]:
-                # Use partial results for active tasks
                 cities_processed = partial_results.get("cities_processed", 0)
                 restaurants_processed = partial_results.get("restaurants_processed", 0)
                 deals_found = partial_results.get("deals_found", 0)
                 total_cities = partial_results.get("total_cities", 0)
                 current_city = partial_results.get("current_city", "")
             else:
-                # Use completed results for finished tasks
                 cities_processed = completed_results.get("cities_processed", 0)
                 restaurants_processed = completed_results.get("restaurants_processed", 0)
                 deals_found = completed_results.get("deals_found", 0)
                 total_cities = completed_results.get("total_cities", 0)
                 current_city = completed_results.get("current_city", "")
-            
-            # Start real-time publishing if task is active and not already publishing
+
             if current_status in ["created", "running", "initializing", "fetching_cities", "scraping_deals"]:
                 if not realtime_publisher.is_publishing(task_id):
                     try:
@@ -136,7 +105,7 @@ class DealScrapeController:
                 "error": task_status.get("error"),
                 "created_at": task_status.get("created_at"),
                 "updated_at": task_status.get("updated_at"),
-                "execution_time_seconds": None  # Will be calculated by frontend if needed
+                "execution_time_seconds": None  
             }
             
         except HTTPException:
@@ -150,15 +119,6 @@ class DealScrapeController:
     
     @staticmethod
     async def stop_deal_scraping_task(task_id: str) -> DealStopResponse:
-        """
-        Stop a running deal scraping task.
-        
-        Args:
-            task_id: Task ID to stop
-            
-        Returns:
-            DealStopResponse with stop result information
-        """
         try:
             if not task_id:
                 raise HTTPException(
@@ -182,8 +142,7 @@ class DealScrapeController:
             
             current_status = task_status.get("status")
             was_running = current_status in ["created", "running", "initializing", "fetching_cities", "scraping_deals"]
-            
-            # Check if task is already completed or failed
+
             if current_status in ["completed", "failed", "stopped"]:
                 return DealStopResponse(
                     success=True,
@@ -192,10 +151,8 @@ class DealScrapeController:
                     was_running=False,
                     cleanup_completed=True
                 )
-            
-            # Stop real-time publishing first
+
             try:
-                # Check if publisher is actually running for this task
                 if realtime_publisher.is_publishing(task_id):
                     await realtime_publisher.stop_publishing(task_id)
                     logger.info(f"Stopped real-time publishing for deal scraping task {task_id}")
@@ -203,9 +160,7 @@ class DealScrapeController:
                     logger.debug(f"Real-time publishing was not active for task {task_id}")
             except Exception as e:
                 logger.warning(f"Failed to stop real-time publishing for task {task_id}: {str(e)}")
-                # Don't fail the entire stop operation if publishing stop fails
-            
-            # Use the orchestrator to stop the actual deal scraping process
+
             try:
                 from app.utils.orchestrator import orchestrator
                 stop_result = orchestrator.stop_deal_scraping(task_id)
@@ -215,17 +170,15 @@ class DealScrapeController:
                     cleanup_completed = stop_result.get("cleanup_completed", False)
                 else:
                     logger.warning(f"Orchestrator reported failure stopping task {task_id}: {stop_result.get('message')}")
-                    # Still mark as stopped in task manager for consistency
                     cleanup_completed = False
             except Exception as e:
                 logger.error(f"Error calling orchestrator stop for task {task_id}: {str(e)}")
                 cleanup_completed = False
-            
-            # Always update task status to stopped to ensure consistency
+
             task_manager.update_task_status(
                 task_id,
                 status="stopped",
-                progress=95.0,  # Set to 95% as per requirement
+                progress=95.0,  
                 result={
                     **task_status.get("result", {}),
                     "stopped_at": datetime.now().isoformat(),
@@ -258,38 +211,22 @@ class DealScrapeController:
         page_size: int = 50,
         limit: Optional[int] = None
     ) -> Dict[str, Any]:
-        """
-        Get all past deal scraping results from database.
-        
-        Args:
-            page: Page number for pagination
-            page_size: Number of results per page
-            limit: Maximum number of results to return (overrides pagination if provided)
-            
-        Returns:
-            Dictionary with paginated deal results
-        """
         try:
-            # Calculate skip and limit for pagination
             skip = (page - 1) * page_size
             
             if limit:
-                # If limit is provided, ignore pagination
                 actual_limit = limit
                 skip = 0
             else:
                 actual_limit = page_size
-            
-            # Get total count
+
             total_count = await DealResult.count()
-            
-            # Get paginated results, sorted by creation date (newest first)
+
             deal_results = await DealResult.find_all().sort([
-                ("created_at", -1),  # -1 for descending order (newest first)
-                ("completed_at", -1)  # Secondary sort field
+                ("created_at", -1),  
+                ("completed_at", -1)  
             ]).skip(skip).limit(actual_limit).to_list()
-            
-            # Convert to summary format
+
             results_data = []
             for deal_result in deal_results:
                 minimal_summary = {
@@ -301,13 +238,11 @@ class DealScrapeController:
                     "restaurants_processed": deal_result.restaurants_processed,
                     "deals_processed": deal_result.deals_processed
                 }
-                
-                # Import here to avoid circular imports
+
                 from app.models.restaurant_deal.restaurant_model import DealResultSummaryMinimal
                 deal_summary = DealResultSummaryMinimal(**minimal_summary)
                 results_data.append(deal_summary)
-            
-            # Calculate pagination info
+
             has_more = False
             if not limit:
                 has_more = (skip + actual_limit) < total_count
@@ -332,22 +267,12 @@ class DealScrapeController:
     
     @staticmethod
     async def get_deal_result_by_task_id(task_id: str) -> Optional[DealResultSummary]:
-        """
-        Get a specific deal result by task ID.
-        
-        Args:
-            task_id: Task ID to get result for
-            
-        Returns:
-            DealResultSummary if found, None otherwise
-        """
         try:
             deal_result = await DealResult.find_one(DealResult.task_id == task_id)
             
             if not deal_result:
                 return None
-            
-            # Convert to summary using the model's method
+
             summary_data = deal_result.get_summary()
             return DealResultSummary(**summary_data)
             
@@ -366,31 +291,21 @@ class DealScrapeController:
         restaurants_data: List[Dict[str, Any]],
         summary_by_city: Dict[str, Dict[str, int]]
     ) -> DealResult:
-        """
-        Save deal scraping results to database.
-        This method is called by the orchestrator when scraping completes successfully.
-        """
         try:
-            # Check if result already exists
             existing_result = await DealResult.find_one(DealResult.task_id == task_id)
             if existing_result:
                 logger.warning(f"Deal result for task {task_id} already exists")
                 return existing_result
-            
-            # Get the original task creation time from task manager
+
             task_status = task_manager.get_task_status(task_id)
             if task_status and task_status.get('created_at'):
-                # Parse the ISO format datetime string from task manager
                 from datetime import datetime
                 original_created_at = datetime.fromisoformat(task_status['created_at'].replace('Z', '+00:00'))
-                # Convert to UTC datetime (remove timezone info for MongoDB)
                 original_created_at = original_created_at.replace(tzinfo=None)
             else:
-                # Fallback to current time if we can't get original creation time
                 logger.warning(f"Could not get original creation time for task {task_id}, using current time")
                 original_created_at = datetime.utcnow()
-            
-            # Create new result with correct timestamps
+
             deal_result = DealResult(
                 task_id=task_id,
                 cities_requested=cities_requested,
@@ -416,15 +331,6 @@ class DealScrapeController:
     
     @staticmethod
     async def delete_deal_result(task_id: str) -> bool:
-        """
-        Delete a deal result by task ID.
-        
-        Args:
-            task_id: Task ID to delete result for
-            
-        Returns:
-            True if deleted, False if not found
-        """
         try:
             deal_result = await DealResult.find_one(DealResult.task_id == task_id)
             

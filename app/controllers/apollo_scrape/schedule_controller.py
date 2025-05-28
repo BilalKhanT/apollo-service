@@ -27,23 +27,20 @@ class ScheduleController:
                 
                 existing_schedule.schedule_name = request.schedule_name
                 existing_schedule.day_of_week = request.day_of_week
-                existing_schedule.time_of_day = request.time_of_day  # Store as string
+                existing_schedule.time_of_day = request.time_of_day  
                 existing_schedule.max_links_to_scrape = request.max_links_to_scrape
                 existing_schedule.max_pages_to_scrape = request.max_pages_to_scrape
                 existing_schedule.depth_limit = request.depth_limit
                 existing_schedule.domain_restriction = request.domain_restriction
                 existing_schedule.scrape_pdfs_and_xls = request.scrape_pdfs_and_xls
-                
-                # Calculate next run for display purposes
+
                 existing_schedule.next_run_at = existing_schedule.calculate_next_run()
                 existing_schedule.update_timestamp()
-                
-                # Save will automatically sync with the unified scheduler
+
                 await existing_schedule.save()
                 schedule = existing_schedule
                 
             else:
-                # Create new schedule
                 logger.info(f"Creating new schedule for {request.base_url}")
                 
                 schedule = CrawlSchedule(
@@ -59,10 +56,8 @@ class ScheduleController:
                     status=ScheduleStatus.ACTIVE
                 )
 
-                # Calculate next run for display purposes
                 schedule.next_run_at = schedule.calculate_next_run()
-                
-                # Insert will automatically sync with the unified scheduler
+
                 await schedule.save()
 
             return CrawlScheduleResponse(
@@ -70,7 +65,7 @@ class ScheduleController:
                 base_url=schedule.base_url,
                 schedule_name=schedule.schedule_name,
                 day_of_week=schedule.day_of_week,
-                time_of_day=schedule.time_of_day,  # Already a string
+                time_of_day=schedule.time_of_day,  
                 max_links_to_scrape=schedule.max_links_to_scrape,
                 max_pages_to_scrape=schedule.max_pages_to_scrape,
                 depth_limit=schedule.depth_limit,
@@ -110,7 +105,7 @@ class ScheduleController:
                 base_url=schedule.base_url,
                 schedule_name=schedule.schedule_name,
                 day_of_week=schedule.day_of_week,
-                time_of_day=schedule.time_of_day,  # Already a string
+                time_of_day=schedule.time_of_day,  
                 max_links_to_scrape=schedule.max_links_to_scrape,
                 max_pages_to_scrape=schedule.max_pages_to_scrape,
                 depth_limit=schedule.depth_limit,
@@ -157,7 +152,7 @@ class ScheduleController:
                     base_url=schedule.base_url,
                     schedule_name=schedule.schedule_name,
                     day_of_week=schedule.day_of_week,
-                    time_of_day=schedule.time_of_day,  # Already a string
+                    time_of_day=schedule.time_of_day,  
                     max_links_to_scrape=schedule.max_links_to_scrape,
                     max_pages_to_scrape=schedule.max_pages_to_scrape,
                     depth_limit=schedule.depth_limit,
@@ -196,8 +191,7 @@ class ScheduleController:
                     status_code=404, 
                     detail=f"Schedule {schedule_id} not found"
                 )
-            
-            # Delete will automatically remove from the unified scheduler
+
             await schedule.delete()
             logger.info(f"Deleted schedule {schedule_id} for {schedule.base_url}")
             
@@ -245,7 +239,6 @@ class ScheduleController:
         
     @staticmethod
     async def pause_schedule(schedule_id: str) -> dict:
-        """Pause a schedule (set status to PAUSED)"""
         try:
             schedule = await CrawlSchedule.get(schedule_id)
             if not schedule:
@@ -259,8 +252,7 @@ class ScheduleController:
             
             schedule.status = ScheduleStatus.PAUSED
             schedule.update_timestamp()
-            
-            # Save will automatically sync with the unified scheduler (removes the job)
+
             await schedule.save()
             
             logger.info(f"Paused schedule {schedule_id} for {schedule.base_url}")
@@ -278,7 +270,6 @@ class ScheduleController:
 
     @staticmethod
     async def resume_schedule(schedule_id: str) -> dict:
-        """Resume a paused schedule (set status to ACTIVE)"""
         try:
             schedule = await CrawlSchedule.get(schedule_id)
             if not schedule:
@@ -291,12 +282,10 @@ class ScheduleController:
                 return {"message": f"Schedule {schedule_id} is already active"}
             
             schedule.status = ScheduleStatus.ACTIVE
-            
-            # Recalculate next run for display purposes
+
             schedule.next_run_at = schedule.calculate_next_run()
             schedule.update_timestamp()
-            
-            # Save will automatically sync with the unified scheduler (adds the job back)
+
             await schedule.save()
             
             logger.info(f"Resumed schedule {schedule_id} for {schedule.base_url}")

@@ -4,7 +4,6 @@ from app.utils.task_manager import task_manager
 from app.utils.orchestrator import orchestrator
 from app.utils.realtime_publisher import realtime_publisher
 from app.models.apollo_scrape.crawl_model import CrawlStatus
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,8 +33,7 @@ class CrawlController:
         )
         
         task_status = task_manager.get_task_status(task_id)
-        
-        # Start real-time publishing for this task
+
         try:
             await realtime_publisher.start_publishing(task_id, interval=1.0)
             logger.info(f"Started real-time publishing for crawl task {task_id}")
@@ -75,8 +73,7 @@ class CrawlController:
         )
         
         current_stage = task_status["status"]
-        
-        # Determine current stage based on status and result
+
         if task_status["status"] == "running":
             if result.get("cluster_complete"):
                 current_stage = "year_extraction"
@@ -88,8 +85,7 @@ class CrawlController:
                 current_stage = "crawling"
         elif task_status["status"] in ["crawling", "processing", "clustering", "year_extraction", "saving_to_database"]:
             current_stage = task_status["status"]
-        
-        # Start real-time publishing if task is active and not already publishing
+
         if task_status["status"] in ["created", "running", "crawling", "processing", "clustering", "year_extraction"]:
             if not realtime_publisher.is_publishing(task_id):
                 try:
@@ -124,8 +120,7 @@ class CrawlController:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Task {task_id} is not a crawl task"
             )
-        
-        # Stop real-time publishing first
+
         try:
             await realtime_publisher.stop_publishing(task_id)
             logger.info(f"Stopped real-time publishing for crawl task {task_id}")

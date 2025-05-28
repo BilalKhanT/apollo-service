@@ -18,39 +18,29 @@ class DealScheduleController:
     
     @staticmethod
     async def create_or_update_schedule(request: DealScheduleRequest) -> DealScheduleResponse:
-        """
-        Create a new deal schedule or update an existing one for the same cities combination.
-        Now integrates with the unified scheduler service.
-        """
         try:
-            # Sort cities for consistent comparison
             sorted_cities = sorted(request.cities)
-            
-            # Check for existing schedule with the same cities
+
             existing_schedule = await DealScrapeSchedule.find_one(
                 DealScrapeSchedule.cities == sorted_cities
             )
             
             if existing_schedule:
                 logger.info(f"Updating existing deal schedule for cities: {sorted_cities}")
-                
-                # Update existing schedule
+
                 existing_schedule.schedule_name = request.schedule_name
                 existing_schedule.day_of_week = request.day_of_week
                 existing_schedule.time_of_day = request.time_of_day
                 existing_schedule.update_timestamp()
-                
-                # Calculate next run for display (actual scheduling handled by APScheduler)
+
                 existing_schedule.next_run_at = existing_schedule.calculate_next_run()
-                
-                # Save and sync with scheduler
+
                 await existing_schedule.save()
                 schedule = existing_schedule
                 
                 logger.info(f"Updated deal schedule {schedule.id} and synced with unified scheduler")
                 
             else:
-                # Create new schedule
                 logger.info(f"Creating new deal schedule for cities: {sorted_cities}")
                 
                 schedule = DealScrapeSchedule(
@@ -61,10 +51,8 @@ class DealScheduleController:
                     status=ScheduleStatus.ACTIVE
                 )
 
-                # Calculate next run for display
                 schedule.next_run_at = schedule.calculate_next_run()
-                
-                # Save and sync with scheduler (handled by the model's save() method)
+
                 await schedule.save()
                 
                 logger.info(f"Created deal schedule {schedule.id} and synced with unified scheduler")
@@ -96,9 +84,6 @@ class DealScheduleController:
     
     @staticmethod
     async def get_schedule(schedule_id: str) -> DealScheduleResponse:
-        """
-        Get a specific deal schedule by ID.
-        """
         try:
             schedule = await DealScrapeSchedule.get(schedule_id)
             if not schedule:
@@ -140,20 +125,14 @@ class DealScheduleController:
         limit: int = 50,
         skip: int = 0
     ) -> DealScheduleListResponse:
-        """
-        List all deal schedules with optional filtering.
-        """
         try:
-            # Build query
             query = {}
             if status:
                 query[DealScrapeSchedule.status] = status
 
-            # Get schedules with pagination
             schedules = await DealScrapeSchedule.find(query).skip(skip).limit(limit).to_list()
             total_count = await DealScrapeSchedule.find(query).count()
-            
-            # Convert to response format
+
             schedule_responses = []
             for schedule in schedules:
                 schedule_responses.append(DealScheduleResponse(
@@ -188,10 +167,6 @@ class DealScheduleController:
     
     @staticmethod
     async def delete_schedule(schedule_id: str) -> dict:
-        """
-        Delete a deal schedule by ID.
-        Now removes the schedule from the unified scheduler as well.
-        """
         try:
             schedule = await DealScrapeSchedule.get(schedule_id)
             if not schedule:
@@ -201,8 +176,7 @@ class DealScheduleController:
                 )
             
             cities_info = ", ".join(schedule.cities)
-            
-            # Delete from database (this will also remove from scheduler via the model's delete() method)
+
             await schedule.delete()
             
             logger.info(f"Deleted deal schedule {schedule_id} for cities: {cities_info} and removed from unified scheduler")
@@ -220,9 +194,6 @@ class DealScheduleController:
     
     @staticmethod
     async def get_schedule_status(schedule_id: str) -> DealScheduleStatusResponse:
-        """
-        Get the status of a specific deal schedule.
-        """
         try:
             schedule = await DealScrapeSchedule.get(schedule_id)
             if not schedule:
@@ -255,10 +226,6 @@ class DealScheduleController:
         
     @staticmethod
     async def pause_schedule(schedule_id: str) -> dict:
-        """
-        Pause a deal schedule (set status to PAUSED).
-        Now removes the schedule from the unified scheduler.
-        """
         try:
             schedule = await DealScrapeSchedule.get(schedule_id)
             if not schedule:
@@ -272,8 +239,7 @@ class DealScheduleController:
             
             schedule.status = ScheduleStatus.PAUSED
             schedule.update_timestamp()
-            
-            # Save and sync with scheduler (will remove from scheduler due to PAUSED status)
+
             await schedule.save()
             
             cities_info = ", ".join(schedule.cities)
@@ -292,10 +258,6 @@ class DealScheduleController:
 
     @staticmethod
     async def resume_schedule(schedule_id: str) -> dict:
-        """
-        Resume a paused deal schedule (set status to ACTIVE).
-        Now adds the schedule back to the unified scheduler.
-        """
         try:
             schedule = await DealScrapeSchedule.get(schedule_id)
             if not schedule:
@@ -310,8 +272,7 @@ class DealScheduleController:
             schedule.status = ScheduleStatus.ACTIVE
             schedule.next_run_at = schedule.calculate_next_run()
             schedule.update_timestamp()
-            
-            # Save and sync with scheduler (will add to scheduler due to ACTIVE status)
+
             await schedule.save()
             
             cities_info = ", ".join(schedule.cities)
@@ -330,10 +291,6 @@ class DealScheduleController:
     
     @staticmethod
     async def update_schedule(schedule_id: str, request: DealScheduleUpdateRequest) -> DealScheduleResponse:
-        """
-        Update an existing deal schedule with partial data.
-        Now syncs changes with the unified scheduler.
-        """
         try:
             schedule = await DealScrapeSchedule.get(schedule_id)
             if not schedule:
@@ -341,11 +298,9 @@ class DealScheduleController:
                     status_code=404, 
                     detail=f"Deal schedule {schedule_id} not found"
                 )
-            
-            # Track if timing-related fields changed
+
             timing_changed = False
-            
-            # Update only provided fields
+
             if request.cities is not None:
                 schedule.cities = sorted(request.cities)
             if request.schedule_name is not None:
@@ -358,15 +313,13 @@ class DealScheduleController:
                 timing_changed = True
             if request.status is not None:
                 schedule.status = request.status
-                timing_changed = True  # Status change affects scheduler
-            
-            # Recalculate next run time if timing-related fields changed
+                timing_changed = True  
+
             if timing_changed and schedule.status == ScheduleStatus.ACTIVE:
                 schedule.next_run_at = schedule.calculate_next_run()
             
             schedule.update_timestamp()
-            
-            # Save and sync with scheduler
+
             await schedule.save()
             
             logger.info(f"Updated deal schedule {schedule_id} and synced with unified scheduler")

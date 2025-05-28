@@ -48,8 +48,7 @@ class TaskManager:
         
         with self.logs_lock:
             self.task_logs[task_id] = []
-        
-        # Publish WebSocket notification for task creation
+
         self._safe_publish_status_update(task_id)
         
         return task_id
@@ -100,11 +99,9 @@ class TaskManager:
                 logger.error(f"Task {task_id} error: {error}")
             
             task['updated_at'] = datetime.now().isoformat()
-        
-        # Publish WebSocket notification
+
         self._safe_publish_status_update(task_id)
-        
-        # If task completed, publish completion notification
+
         if status_changed and status in ['completed', 'failed', 'error', 'stopped']:
             self._safe_publish_completion(task_id)
         
@@ -143,7 +140,6 @@ class TaskManager:
             return logs
     
     def get_recent_logs(self, task_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Get recent logs without clearing them"""
         
         with self.logs_lock:
             logs = self.task_logs.get(task_id, [])
@@ -163,8 +159,7 @@ class TaskManager:
         }
         
         self.store_log(task_id, log_entry)
-        
-        # Publish WebSocket notification for new logs
+
         self._safe_publish_log_update(task_id, [log_entry])
             
         if level == "debug":
@@ -179,93 +174,75 @@ class TaskManager:
         return True
     
     def _safe_publish_status_update(self, task_id: str):
-        """Safely publish status update via WebSocket"""
         try:
-            # Check if we're in an async context
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     asyncio.create_task(self._async_publish_status_update(task_id))
                 else:
-                    # If loop exists but not running, run the coroutine
                     loop.run_until_complete(self._async_publish_status_update(task_id))
             except RuntimeError:
-                # No event loop running, create a new one for this operation
                 asyncio.run(self._async_publish_status_update(task_id))
         except Exception as e:
             logger.debug(f"Could not publish WebSocket status update for task {task_id}: {str(e)}")
     
     def _safe_publish_log_update(self, task_id: str, logs: List[Dict[str, Any]]):
-        """Safely publish log update via WebSocket"""
         if not logs:
             return
             
         try:
-            # Check if we're in an async context
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     asyncio.create_task(self._async_publish_log_update(task_id, logs))
                 else:
-                    # If loop exists but not running, run the coroutine
                     loop.run_until_complete(self._async_publish_log_update(task_id, logs))
             except RuntimeError:
-                # No event loop running, create a new one for this operation
                 asyncio.run(self._async_publish_log_update(task_id, logs))
         except Exception as e:
             logger.debug(f"Could not publish WebSocket log update for task {task_id}: {str(e)}")
     
     def _safe_publish_completion(self, task_id: str):
-        """Safely publish task completion via WebSocket"""
         try:
-            # Check if we're in an async context
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     asyncio.create_task(self._async_publish_completion(task_id))
                 else:
-                    # If loop exists but not running, run the coroutine
                     loop.run_until_complete(self._async_publish_completion(task_id))
             except RuntimeError:
-                # No event loop running, create a new one for this operation
                 asyncio.run(self._async_publish_completion(task_id))
         except Exception as e:
             logger.debug(f"Could not publish WebSocket completion for task {task_id}: {str(e)}")
     
     async def _async_publish_status_update(self, task_id: str):
-        """Async method to publish status update via WebSocket"""
         try:
             from app.utils.socket_manager import socket_manager
             task_status = self.get_task_status(task_id)
             if task_status:
                 await socket_manager.emit_task_status(task_id, task_status)
         except ImportError:
-            # WebSocket manager not available yet (during startup)
             pass
         except Exception as e:
             logger.warning(f"Failed to publish WebSocket status update for task {task_id}: {str(e)}")
 
     async def _async_publish_log_update(self, task_id: str, logs: List[Dict[str, Any]]):
-        """Async method to publish log update via WebSocket"""
         try:
             from app.utils.socket_manager import socket_manager
             if logs:
                 await socket_manager.emit_task_logs(task_id, logs)
         except ImportError:
-            # WebSocket manager not available yet (during startup)
             pass
         except Exception as e:
             logger.warning(f"Failed to publish WebSocket log update for task {task_id}: {str(e)}")
 
     async def _async_publish_completion(self, task_id: str):
-        """Async method to publish task completion via WebSocket"""
         try:
             from app.utils.socket_manager import socket_manager
             task_status = self.get_task_status(task_id)
             if task_status:
                 await socket_manager.emit_task_completion(task_id, task_status)
         except ImportError:
-            # WebSocket manager not available yet (during startup)
             pass
         except Exception as e:
             logger.warning(f"Failed to publish WebSocket completion for task {task_id}: {str(e)}")

@@ -5,7 +5,6 @@ from pymongo.server_api import ServerApi
 from beanie import init_beanie
 from typing import Optional
 
-# Load environment variables early
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -19,7 +18,6 @@ class Database:
     client: Optional[AsyncIOMotorClient] = None
     database = None
 
-# MongoDB Atlas Configuration
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb+srv://bilalkhan:Nl8k9ZlwybiTi9nx@apollostagedb.iwunbq7.mongodb.net/?retryWrites=true&w=majority&appName=ApolloStageDB")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "apollo_crawler")
 MONGODB_MIN_POOL_SIZE = int(os.getenv("MONGODB_MIN_POOL_SIZE", "5"))
@@ -28,7 +26,6 @@ MONGODB_MAX_IDLE_TIME = int(os.getenv("MONGODB_MAX_IDLE_TIME", "30000"))
 MONGODB_CONNECT_TIMEOUT = int(os.getenv("MONGODB_CONNECT_TIMEOUT", "20000"))
 MONGODB_SERVER_SELECTION_TIMEOUT = int(os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT", "10000"))
 
-# Debug: Log what URL we're using
 logger = logging.getLogger(__name__)
 logger.info(f"MongoDB URL loaded: {MONGODB_URL[:50]}... (showing first 50 chars)")
 logger.info(f"Database name: {DATABASE_NAME}")
@@ -37,7 +34,6 @@ db = Database()
 
 async def connect_to_mongo():
     try:
-        # Log the connection attempt (hide credentials)
         safe_url = MONGODB_URL
         if '@' in safe_url:
             parts = safe_url.split('@')
@@ -48,8 +44,7 @@ async def connect_to_mongo():
                     safe_url = f"{protocol}://***:***@{parts[1]}"
         
         logger.info(f"Connecting to MongoDB Atlas at {safe_url}")
-        
-        # Atlas-optimized connection parameters
+
         connection_params = {
             "server_api": ServerApi('1'),
             "retryWrites": True,
@@ -68,11 +63,9 @@ async def connect_to_mongo():
         db.client = AsyncIOMotorClient(MONGODB_URL, **connection_params)
         db.database = db.client[DATABASE_NAME]
 
-        # Test the connection
         await db.client.admin.command('ping')
         logger.info("Successfully connected to MongoDB Atlas")
 
-        # Import all models
         from app.models.database.apollo_scraper.crawl_result_model import CrawlResult
         from app.models.database.apollo_scraper.crawl_schedule_model import CrawlSchedule
         from app.models.database.restaurant_deal.restaurant_result_model import DealResult
