@@ -1,7 +1,7 @@
 from beanie import Document
 from typing import Optional
 from pydantic import Field, validator
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import pytz
 from enum import Enum
 import logging
@@ -38,7 +38,7 @@ class CrawlSchedule(Document):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_run_at: Optional[datetime] = None
-    next_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None  
     total_runs: int = Field(default=0)
     successful_runs: int = Field(default=0)
     failed_runs: int = Field(default=0)
@@ -71,17 +71,9 @@ class CrawlSchedule(Document):
         return time.fromisoformat(self.time_of_day)
     
     def calculate_next_run(self, force_next_week: bool = False) -> datetime:
-        from datetime import datetime, timedelta
-        
-        # Asia/Karachi timezone
         karachi_tz = pytz.timezone('Asia/Karachi')
-        
-        # Get current time in Karachi timezone
         now_utc = datetime.utcnow()
         now_karachi = now_utc.replace(tzinfo=pytz.UTC).astimezone(karachi_tz)
-        
-        logger.info(f"DEBUG: Current UTC time: {now_utc}")
-        logger.info(f"DEBUG: Current Karachi time: {now_karachi}")
         
         day_mapping = {
             DayOfWeek.MONDAY: 0,
@@ -96,49 +88,32 @@ class CrawlSchedule(Document):
         target_weekday = day_mapping[self.day_of_week]
         current_weekday = now_karachi.weekday()
         target_time = self.get_time_object()
-        
-        logger.info(f"DEBUG: Target weekday: {target_weekday} ({self.day_of_week})")
-        logger.info(f"DEBUG: Current weekday: {current_weekday}")
-        logger.info(f"DEBUG: Target time: {target_time} (Karachi time)")
-        
-        # Calculate days ahead
         days_ahead = target_weekday - current_weekday
 
         if days_ahead == 0 and not force_next_week:
-            # Same day - check if time has passed with a buffer
             scheduled_time_karachi = datetime.combine(now_karachi.date(), target_time)
             scheduled_time_karachi = karachi_tz.localize(scheduled_time_karachi)
             
-            # Add a 5-minute buffer to prevent immediate re-scheduling
             time_buffer = timedelta(minutes=1)
             buffer_time = now_karachi + time_buffer
             
-            logger.info(f"DEBUG: Scheduled time Karachi: {scheduled_time_karachi}")
-            logger.info(f"DEBUG: Current time + buffer: {buffer_time}")
-            
             if scheduled_time_karachi > buffer_time:
-                # Time hasn't passed yet today (with buffer)
                 next_run_utc = scheduled_time_karachi.astimezone(pytz.UTC).replace(tzinfo=None)
-                logger.info(f"DEBUG: Next run today at: {next_run_utc} UTC ({scheduled_time_karachi} Karachi)")
+                logger.debug(f"DEBUG: Next run today at: {next_run_utc} UTC ({scheduled_time_karachi} Karachi)")
                 return next_run_utc
             else:
-                # Time has passed or is too close, schedule for next week
                 days_ahead = 7
-                logger.info(f"DEBUG: Time passed or too close, scheduling for next week")
+                logger.debug(f"DEBUG: Time passed, scheduling for next week")
         elif days_ahead <= 0 or force_next_week:
-            # If force_next_week is True or days_ahead is negative/zero, go to next week
             days_ahead = 7 + (days_ahead if days_ahead < 0 else 0)
-            logger.info(f"DEBUG: Adjusted days ahead: {days_ahead}")
+            logger.debug(f"DEBUG: Adjusted days ahead: {days_ahead}")
 
-        # Calculate next run date in Karachi timezone
         next_run_date_karachi = now_karachi + timedelta(days=days_ahead)
         next_run_karachi = datetime.combine(next_run_date_karachi.date(), target_time)
         next_run_karachi = karachi_tz.localize(next_run_karachi)
-        
-        # Convert to UTC for storage
         next_run_utc = next_run_karachi.astimezone(pytz.UTC).replace(tzinfo=None)
         
-        logger.info(f"DEBUG: Next run calculated: {next_run_utc} UTC ({next_run_karachi} Karachi)")
+        logger.debug(f"DEBUG: Next run calculated: {next_run_utc} UTC ({next_run_karachi} Karachi)")
         return next_run_utc
     
     def mark_run_started(self, task_id: str):
@@ -147,7 +122,8 @@ class CrawlSchedule(Document):
         self.total_runs += 1
         self.next_run_at = self.calculate_next_run(force_next_week=True)
         self.update_timestamp()
-        logger.info(f"Marked run started for schedule {self.id}. Next run: {self.next_run_at} UTC")
+        
+        logger.info(f"Marked run started for schedule {self.id}. Next run display: {self.next_run_at} UTC")
     
     def mark_run_completed(self, success: bool, error: Optional[str] = None):
         if success:
@@ -158,3 +134,30 @@ class CrawlSchedule(Document):
             self.last_error = error
         
         self.update_timestamp()
+    
+    async def sync_with_scheduler(self):
+        try:
+            from app.services.schedule_service import scheduler_service, ScheduleType
+            
+            if self.status == ScheduleStatus.ACTIVE:
+                await scheduler_service.update_crawl_schedule(self)
+            else:
+                await scheduler_service.remove_schedule(str(self.id), ScheduleType.CRAWL)
+                
+        except Exception as e:
+            logger.error(f"Error syncing schedule {self.id} with scheduler: {str(e)}")
+    
+    async def save(self, *args, **kwargs):
+        result = await super().save(*args, **kwargs)
+        await self.sync_with_scheduler()
+        
+        return result
+    
+    async def delete(self, *args, **kwargs):
+        try:
+            from app.services.schedule_service import scheduler_service, ScheduleType
+            await scheduler_service.remove_schedule(str(self.id), ScheduleType.CRAWL)
+        except Exception as e:
+            logger.error(f"Error removing schedule {self.id} from scheduler: {str(e)}")
+        
+        return await super().delete(*args, **kwargs)
