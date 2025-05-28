@@ -1,12 +1,12 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 import logging
-from app.models.crawl_model import (
+from app.models.apollo_scrape.crawl_model import (
     CrawlRequest, 
     CrawlResponse, 
     CrawlStopResponse
 )
 from app.models.base import ErrorResponse
-from app.controllers.crawl_controller import CrawlController
+from app.controllers.apollo_scrape.crawl_controller import CrawlController
 from app.utils.orchestrator import orchestrator
 
 logger = logging.getLogger(__name__)

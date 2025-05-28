@@ -2,8 +2,8 @@ from typing import List, Optional
 from fastapi import HTTPException
 from app.utils.task_manager import task_manager
 from app.utils.realtime_publisher import realtime_publisher
-from app.models.scrape_model import ScrapingStatus
-from app.controllers.crawl_result_controller import CrawlResultController
+from app.models.apollo_scrape.scrape_model import ScrapingStatus
+from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
 import logging
 
 logger = logging.getLogger(__name__)

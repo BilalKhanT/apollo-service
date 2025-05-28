@@ -12,7 +12,7 @@ from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
 import pytz
 
-from app.models.database.crawl_schedule_model import CrawlSchedule, ScheduleStatus as CrawlScheduleStatus
+from app.models.database.apollo_scraper.crawl_schedule_model import CrawlSchedule, ScheduleStatus as CrawlScheduleStatus
 from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule, ScheduleStatus as DealScheduleStatus
 from app.utils.task_manager import task_manager
 

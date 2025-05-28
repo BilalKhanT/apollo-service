@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional
 from fastapi import HTTPException
-from app.controllers.crawl_result_controller import CrawlResultController
+from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
 
 
 class ClusterController:

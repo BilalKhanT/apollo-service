@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, logger, status
-from app.models.log_model import LogResponse
+from app.models.apollo_scrape.log_model import LogResponse
 from app.models.base import ErrorResponse
-from app.controllers.logs_controller import LogsController
+from app.controllers.apollo_scrape.logs_controller import LogsController
 
 router = APIRouter(prefix="/api/logs", tags=["Logs"])
 

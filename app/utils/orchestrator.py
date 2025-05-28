@@ -21,16 +21,16 @@ from app.utils.config import (
 )
 
 # Import from services
-from app.services.apollo import Apollo
-from app.services.link_processor import LinkProcessor
-from app.services.url_clusterer import URLClusterer
-from app.services.year_extractor import YearExtractor
-from app.services.scraper import ClusterScraper
-from app.services.downloader import FileDownloader
+from app.services.apollo_scrape.apollo import Apollo
+from app.services.apollo_scrape.link_processor import LinkProcessor
+from app.services.apollo_scrape.url_clusterer import URLClusterer
+from app.services.apollo_scrape.year_extractor import YearExtractor
+from app.services.apollo_scrape.scraper import ClusterScraper
+from app.services.apollo_scrape.downloader import FileDownloader
 from app.services.restaurant_deal.deal_scrape_service import DealScrapperService
 
 # Import database controller
-from app.controllers.crawl_result_controller import CrawlResultController
+from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
 from app.controllers.restaurant_deal.deal_scrape_controller import DealScrapeController
 
 # Configure logging

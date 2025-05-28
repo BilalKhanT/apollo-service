@@ -2,8 +2,8 @@ from typing import Optional
 from fastapi import HTTPException
 import logging
 
-from app.models.database.crawl_schedule_model import CrawlSchedule, ScheduleStatus
-from app.models.schedule_model import (
+from app.models.database.apollo_scraper.crawl_schedule_model import CrawlSchedule, ScheduleStatus
+from app.models.apollo_scrape.schedule_model import (
     CrawlScheduleRequest, 
     CrawlScheduleResponse, 
     ScheduleListResponse,

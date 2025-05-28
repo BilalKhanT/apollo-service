@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from typing import Optional
 import logging
 
-from app.models.schedule_model import (
+from app.models.apollo_scrape.schedule_model import (
     CrawlScheduleRequest, 
     CrawlScheduleResponse, 
     ScheduleListResponse,
@@ -11,7 +11,7 @@ from app.models.schedule_model import (
     ScheduleStatus
 )
 from app.models.base import ErrorResponse
-from app.controllers.schedule_controller import ScheduleController
+from app.controllers.apollo_scrape.schedule_controller import ScheduleController
 
 logger = logging.getLogger(__name__)
 

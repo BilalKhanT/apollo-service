@@ -6,7 +6,7 @@ from .base import (
     ErrorResponse,
     HealthResponse
 )
-from .crawl_model import (
+from .apollo_scrape.crawl_model import (
     CrawlRequest,
     CrawlSummary,
     CrawlStatus,
@@ -14,14 +14,14 @@ from .crawl_model import (
     CrawlStopRequest,
     CrawlStopResponse
 )
-from .scrape_model import (
+from .apollo_scrape.scrape_model import (
     ScrapingRequest,
     ScrapingProgress,
     ScrapingSummary,
     ScrapingStatus,
     ScrapingResponse
 )
-from .cluster_model import (
+from .apollo_scrape.cluster_model import (
     Cluster,
     DomainCluster,
     YearCluster,
@@ -31,11 +31,11 @@ from .cluster_model import (
     YearDetailResponse,
     ClustersListResponse
 )
-from .log_model import (
+from .apollo_scrape.log_model import (
     LogEntry,
     LogResponse
 )
-from .schedule_model import (
+from .apollo_scrape.schedule_model import (
     DayOfWeek,
     ScheduleStatus,
     CrawlScheduleRequest,
@@ -70,8 +70,8 @@ from app.models.fb_scrape.fb_scrape_model import (
     FacebookStopResponse,
     FacebookResultsResponseMinimal
 )
-from .database.crawl_result_model import CrawlResult
-from .database.crawl_schedule_model import CrawlSchedule
+from .database.apollo_scraper.crawl_result_model import CrawlResult
+from .database.apollo_scraper.crawl_schedule_model import CrawlSchedule
 from .database.restaurant_deal.restaurant_result_model import DealResult
 from .database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
 from .database.fb_scrape.fb_result_model import FacebookResult

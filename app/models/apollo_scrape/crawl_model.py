@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, validator
 from typing import Optional
 from datetime import datetime
-from .base import TaskStatus, BaseResponse, DataResponse
+from ..base import TaskStatus, BaseResponse, DataResponse
 
 class CrawlRequest(BaseModel):
     base_url: str = Field(

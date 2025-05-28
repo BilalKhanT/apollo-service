@@ -3,7 +3,7 @@ from fastapi import HTTPException, status
 from app.utils.task_manager import task_manager
 from app.utils.orchestrator import orchestrator
 from app.utils.realtime_publisher import realtime_publisher
-from app.models.crawl_model import CrawlStatus
+from app.models.apollo_scrape.crawl_model import CrawlStatus
 import asyncio
 import logging
 
