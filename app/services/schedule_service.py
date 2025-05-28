@@ -628,7 +628,7 @@ class SchedulerService:
                     job_counts['facebook'] += 1
             
             return {
-                "service_name": "unified_scheduler_service",
+                "service_name": "scheduler_service",
                 "running": self.running,
                 "scheduler_state": self.scheduler.state if self.scheduler else "not_initialized",
                 "total_jobs": len(jobs),
