@@ -35,10 +35,6 @@ class ScheduleJobData:
 
 
 class SchedulerService:
-    """
-    Unified scheduler service using APScheduler for precise event-driven scheduling.
-    Replaces the polling-based approach with efficient cron-based scheduling.
-    """
     
     def __init__(self):
         self.scheduler: Optional[AsyncIOScheduler] = None

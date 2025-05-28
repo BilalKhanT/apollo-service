@@ -15,10 +15,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 
 class ClusterScraper:
-    """
-    Enhanced ClusterScraper with improved progress tracking and reporting.
-    Scrapes content from clustered URLs and converts them to markdown.
-    """
     
     def __init__(
         self,

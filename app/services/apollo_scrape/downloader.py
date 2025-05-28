@@ -10,11 +10,6 @@ import threading
 from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 
 class FileDownloader:
-    """
-    A class for downloading files listed in a JSON file and organizing them into folders by year.
-    Features enhanced progress tracking and reporting throughout the download process.
-    Optimized for parallel processing across all years simultaneously.
-    """
     
     def __init__(
         self,

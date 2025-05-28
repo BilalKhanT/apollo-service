@@ -11,11 +11,6 @@ from datetime import datetime
 import pytz
 
 class DealScrapperService:
-    """
-    Enhanced Deal Scrapper Service with real-time progress tracking and reporting.
-    Scrapes restaurant deals from Peekaboo API and saves them as markdown files.
-    Follows the same patterns as other services in the Apollo system.
-    """
     
     # Base configuration
     BASE_HEADERS = {
