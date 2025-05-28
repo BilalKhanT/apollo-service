@@ -80,7 +80,7 @@ app.add_middleware(
 app.include_router(crawl.router)
 app.include_router(cluster.router)
 app.include_router(scrape.router)
-app.include_router(logs.router)
+# app.include_router(logs.router)
 app.include_router(schedule.router)
 app.include_router(deal.router)
 app.include_router(deal_schedule.router)
