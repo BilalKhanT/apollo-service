@@ -615,31 +615,65 @@ class ApolloOrchestrator:
                 temp_clusters_file = os.path.join(self.temp_dir, f"temp_clusters_{timestamp}.json")
                 clusters_dict = {}
 
+                def extract_domain_name(url: str) -> str:
+                    try:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(url)
+                        domain = parsed.netloc
+                        if domain.startswith('www.'):
+                            domain = domain[4:]
+                        return domain
+                    except Exception:
+                        return "unknown_domain"
+
+                domain_clusters = {}
                 for cluster_id, links in cluster_data.items():
-                    clusters_dict[f"domain_{cluster_id}"] = {
+                    if not links:
+                        continue
+
+                    domain_name = extract_domain_name(links[0])
+                    
+                    if domain_name not in domain_clusters:
+                        domain_clusters[domain_name] = {
+                            "clusters": [],
+                            "total_count": 0
+                        }
+
+                    domain_clusters[domain_name]["clusters"].append({
                         "id": cluster_id,
-                        "count": len(links),
-                        "clusters": [
-                            {
-                                "id": cluster_id,
-                                "path": f"cluster_{cluster_id}",
-                                "url_count": len(links),
-                                "urls": links
-                            }
-                        ]
+                        "path": f"cluster_{cluster_id}",
+                        "url_count": len(links),
+                        "urls": links
+                    })
+                    domain_clusters[domain_name]["total_count"] += len(links)
+
+                for domain_name, domain_info in domain_clusters.items():
+                    clusters_dict[domain_name] = {
+                        "id": f"domain_{domain_name.replace('.', '_')}", 
+                        "count": domain_info["total_count"],
+                        "clusters": domain_info["clusters"]
                     }
+
+                total_clusters = sum(len(domain_info["clusters"]) for domain_info in domain_clusters.values())
+                total_urls = sum(len(links) for links in cluster_data.values())
 
                 clusters_data = {
                     "summary": {
-                        "total_domains": len(cluster_data),
-                        "total_clusters": len(cluster_data),
-                        "total_urls": sum(len(links) for links in cluster_data.values())
+                        "total_domains": len(domain_clusters),
+                        "total_clusters": total_clusters,
+                        "total_urls": total_urls
                     },
                     "clusters": clusters_dict
                 }
                 
                 with open(temp_clusters_file, 'w', encoding='utf-8') as f:
                     json.dump(clusters_data, f, indent=2)
+
+                self.publish_log(task_id, f"Created clusters structure with {len(clusters_dict)} domains", "info")
+                for domain, domain_data in clusters_dict.items():
+                    self.publish_log(task_id, f"Domain '{domain}': {len(domain_data['clusters'])} clusters, {domain_data['count']} total URLs", "info")
+                    for cluster in domain_data['clusters']:
+                        self.publish_log(task_id, f"  - Cluster ID '{cluster['id']}': {cluster['url_count']} URLs", "info")
 
                 self.publish_log(task_id, f"Preparing to scrape {len(cluster_data)} clusters with provided links", "info")
                 scraper = ClusterScraper(
@@ -649,12 +683,13 @@ class ApolloOrchestrator:
                     expiry_days=EXPIRY_DAYS
                 )
 
-                self.publish_log(task_id, f"Starting scraping of clusters: {list(cluster_data.keys())}", "info")
+                cluster_ids_to_scrape = list(cluster_data.keys())
+                self.publish_log(task_id, f"Starting scraping of clusters: {cluster_ids_to_scrape}", "info")
                 loop = asyncio.get_event_loop()
                 scrape_result = await loop.run_in_executor(
                     None, 
                     scraper.scrape_clusters, 
-                    list(cluster_data.keys()), 
+                    cluster_ids_to_scrape, 
                     task_id
                 )
 
