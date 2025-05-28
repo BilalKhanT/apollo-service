@@ -2,42 +2,39 @@ from typing import Optional
 from fastapi import HTTPException
 import logging
 
-from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule, ScheduleStatus
-from app.models.restaurant_deal.deal_schedule_model import (
-    DealScheduleRequest, 
-    DealScheduleResponse, 
-    DealScheduleListResponse,
-    DealScheduleStatusResponse,
-    DealScheduleUpdateRequest
+from app.models.database.fb_scrape.fb_schedule_model import FacebookScrapeSchedule, ScheduleStatus
+from app.models.fb_scrape.fb_scrape_schedule_model import (
+    FBScheduleRequest, 
+    FBScheduleResponse, 
+    FBScheduleListResponse,
+    FBScheduleStatusResponse,
+    FBScheduleUpdateRequest
 )
 
 logger = logging.getLogger(__name__)
 
 
-class DealScheduleController:
+class FBScheduleController:
     
     @staticmethod
-    async def create_or_update_schedule(request: DealScheduleRequest) -> DealScheduleResponse:
-        """
-        Create a new deal schedule or update an existing one for the same cities combination.
-        Now integrates with the unified scheduler service.
-        """
+    async def create_or_update_schedule(request: FBScheduleRequest) -> FBScheduleResponse:
         try:
-            # Sort cities for consistent comparison
-            sorted_cities = sorted(request.cities)
+            # Sort keywords for consistent comparison
+            sorted_keywords = sorted([keyword.lower() for keyword in request.keywords])
             
-            # Check for existing schedule with the same cities
-            existing_schedule = await DealScrapeSchedule.find_one(
-                DealScrapeSchedule.cities == sorted_cities
+            # Check for existing schedule with the same keywords
+            existing_schedule = await FacebookScrapeSchedule.find_one(
+                FacebookScrapeSchedule.keywords == sorted_keywords
             )
             
             if existing_schedule:
-                logger.info(f"Updating existing deal schedule for cities: {sorted_cities}")
+                logger.info(f"Updating existing Facebook schedule for keywords: {sorted_keywords}")
                 
                 # Update existing schedule
                 existing_schedule.schedule_name = request.schedule_name
                 existing_schedule.day_of_week = request.day_of_week
                 existing_schedule.time_of_day = request.time_of_day
+                existing_schedule.days = request.days
                 existing_schedule.update_timestamp()
                 
                 # Calculate next run for display (actual scheduling handled by APScheduler)
@@ -47,14 +44,15 @@ class DealScheduleController:
                 await existing_schedule.save()
                 schedule = existing_schedule
                 
-                logger.info(f"Updated deal schedule {schedule.id} and synced with unified scheduler")
+                logger.info(f"Updated Facebook schedule {schedule.id} and synced with unified scheduler")
                 
             else:
                 # Create new schedule
-                logger.info(f"Creating new deal schedule for cities: {sorted_cities}")
+                logger.info(f"Creating new Facebook schedule for keywords: {sorted_keywords}")
                 
-                schedule = DealScrapeSchedule(
-                    cities=sorted_cities,
+                schedule = FacebookScrapeSchedule(
+                    keywords=request.keywords,
+                    days=request.days,
                     schedule_name=request.schedule_name,
                     day_of_week=request.day_of_week,
                     time_of_day=request.time_of_day,
@@ -67,11 +65,12 @@ class DealScheduleController:
                 # Save and sync with scheduler (handled by the model's save() method)
                 await schedule.save()
                 
-                logger.info(f"Created deal schedule {schedule.id} and synced with unified scheduler")
+                logger.info(f"Created Facebook schedule {schedule.id} and synced with unified scheduler")
 
-            return DealScheduleResponse(
+            return FBScheduleResponse(
                 id=str(schedule.id),
-                cities=schedule.cities,
+                keywords=schedule.keywords,
+                days=schedule.days,
                 schedule_name=schedule.schedule_name,
                 day_of_week=schedule.day_of_week,
                 time_of_day=schedule.time_of_day,
@@ -88,28 +87,29 @@ class DealScheduleController:
             )
             
         except Exception as e:
-            logger.error(f"Error creating/updating deal schedule: {str(e)}")
+            logger.error(f"Error creating/updating Facebook schedule: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to create/update deal schedule: {str(e)}"
+                detail=f"Failed to create/update Facebook schedule: {str(e)}"
             )
     
     @staticmethod
-    async def get_schedule(schedule_id: str) -> DealScheduleResponse:
+    async def get_schedule(schedule_id: str) -> FBScheduleResponse:
         """
-        Get a specific deal schedule by ID.
+        Get a specific Facebook schedule by ID.
         """
         try:
-            schedule = await DealScrapeSchedule.get(schedule_id)
+            schedule = await FacebookScrapeSchedule.get(schedule_id)
             if not schedule:
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Deal schedule {schedule_id} not found"
+                    detail=f"Facebook schedule {schedule_id} not found"
                 )
             
-            return DealScheduleResponse(
+            return FBScheduleResponse(
                 id=str(schedule.id),
-                cities=schedule.cities,
+                keywords=schedule.keywords,
+                days=schedule.days,
                 schedule_name=schedule.schedule_name,
                 day_of_week=schedule.day_of_week,
                 time_of_day=schedule.time_of_day,
@@ -128,10 +128,10 @@ class DealScheduleController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting deal schedule {schedule_id}: {str(e)}")
+            logger.error(f"Error getting Facebook schedule {schedule_id}: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to get deal schedule: {str(e)}"
+                detail=f"Failed to get Facebook schedule: {str(e)}"
             )
     
     @staticmethod
@@ -139,26 +139,24 @@ class DealScheduleController:
         status: Optional[ScheduleStatus] = None,
         limit: int = 50,
         skip: int = 0
-    ) -> DealScheduleListResponse:
-        """
-        List all deal schedules with optional filtering.
-        """
+    ) -> FBScheduleListResponse:
         try:
             # Build query
             query = {}
             if status:
-                query[DealScrapeSchedule.status] = status
+                query[FacebookScrapeSchedule.status] = status
 
             # Get schedules with pagination
-            schedules = await DealScrapeSchedule.find(query).skip(skip).limit(limit).to_list()
-            total_count = await DealScrapeSchedule.find(query).count()
+            schedules = await FacebookScrapeSchedule.find(query).skip(skip).limit(limit).to_list()
+            total_count = await FacebookScrapeSchedule.find(query).count()
             
             # Convert to response format
             schedule_responses = []
             for schedule in schedules:
-                schedule_responses.append(DealScheduleResponse(
+                schedule_responses.append(FBScheduleResponse(
                     id=str(schedule.id),
-                    cities=schedule.cities,
+                    keywords=schedule.keywords,
+                    days=schedule.days,
                     schedule_name=schedule.schedule_name,
                     day_of_week=schedule.day_of_week,
                     time_of_day=schedule.time_of_day,
@@ -174,64 +172,57 @@ class DealScheduleController:
                     last_error=schedule.last_error
                 ))
             
-            return DealScheduleListResponse(
+            return FBScheduleListResponse(
                 schedules=schedule_responses,
                 total_count=total_count
             )
             
         except Exception as e:
-            logger.error(f"Error listing deal schedules: {str(e)}")
+            logger.error(f"Error listing Facebook schedules: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to list deal schedules: {str(e)}"
+                detail=f"Failed to list Facebook schedules: {str(e)}"
             )
     
     @staticmethod
     async def delete_schedule(schedule_id: str) -> dict:
-        """
-        Delete a deal schedule by ID.
-        Now removes the schedule from the unified scheduler as well.
-        """
         try:
-            schedule = await DealScrapeSchedule.get(schedule_id)
+            schedule = await FacebookScrapeSchedule.get(schedule_id)
             if not schedule:
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Deal schedule {schedule_id} not found"
+                    detail=f"Facebook schedule {schedule_id} not found"
                 )
             
-            cities_info = ", ".join(schedule.cities)
+            keywords_info = ", ".join(schedule.keywords)
             
             # Delete from database (this will also remove from scheduler via the model's delete() method)
             await schedule.delete()
             
-            logger.info(f"Deleted deal schedule {schedule_id} for cities: {cities_info} and removed from unified scheduler")
+            logger.info(f"Deleted Facebook schedule {schedule_id} for keywords: {keywords_info} and removed from unified scheduler")
             
-            return {"message": f"Deal schedule {schedule_id} deleted successfully"}
+            return {"message": f"Facebook schedule {schedule_id} deleted successfully"}
             
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error deleting deal schedule {schedule_id}: {str(e)}")
+            logger.error(f"Error deleting Facebook schedule {schedule_id}: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to delete deal schedule: {str(e)}"
+                detail=f"Failed to delete Facebook schedule: {str(e)}"
             )
     
     @staticmethod
-    async def get_schedule_status(schedule_id: str) -> DealScheduleStatusResponse:
-        """
-        Get the status of a specific deal schedule.
-        """
+    async def get_schedule_status(schedule_id: str) -> FBScheduleStatusResponse:
         try:
-            schedule = await DealScrapeSchedule.get(schedule_id)
+            schedule = await FacebookScrapeSchedule.get(schedule_id)
             if not schedule:
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Deal schedule {schedule_id} not found"
+                    detail=f"Facebook schedule {schedule_id} not found"
                 )
             
-            return DealScheduleStatusResponse(
+            return FBScheduleStatusResponse(
                 id=str(schedule.id),
                 status=schedule.status,
                 next_run_at=schedule.next_run_at,
@@ -241,34 +232,31 @@ class DealScheduleController:
                 failed_runs=schedule.failed_runs,
                 last_task_id=schedule.last_task_id,
                 last_error=schedule.last_error,
-                cities_count=len(schedule.cities)
+                keywords_count=len(schedule.keywords),
+                days=schedule.days
             )
             
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting deal schedule status {schedule_id}: {str(e)}")
+            logger.error(f"Error getting Facebook schedule status {schedule_id}: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to get deal schedule status: {str(e)}"
+                detail=f"Failed to get Facebook schedule status: {str(e)}"
             )
         
     @staticmethod
     async def pause_schedule(schedule_id: str) -> dict:
-        """
-        Pause a deal schedule (set status to PAUSED).
-        Now removes the schedule from the unified scheduler.
-        """
         try:
-            schedule = await DealScrapeSchedule.get(schedule_id)
+            schedule = await FacebookScrapeSchedule.get(schedule_id)
             if not schedule:
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Deal schedule {schedule_id} not found"
+                    detail=f"Facebook schedule {schedule_id} not found"
                 )
             
             if schedule.status == ScheduleStatus.PAUSED:
-                return {"message": f"Deal schedule {schedule_id} is already paused"}
+                return {"message": f"Facebook schedule {schedule_id} is already paused"}
             
             schedule.status = ScheduleStatus.PAUSED
             schedule.update_timestamp()
@@ -276,36 +264,32 @@ class DealScheduleController:
             # Save and sync with scheduler (will remove from scheduler due to PAUSED status)
             await schedule.save()
             
-            cities_info = ", ".join(schedule.cities)
-            logger.info(f"Paused deal schedule {schedule_id} for cities: {cities_info} and removed from unified scheduler")
+            keywords_info = ", ".join(schedule.keywords)
+            logger.info(f"Paused Facebook schedule {schedule_id} for keywords: {keywords_info} and removed from unified scheduler")
             
-            return {"message": f"Deal schedule {schedule_id} paused successfully"}
+            return {"message": f"Facebook schedule {schedule_id} paused successfully"}
             
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error pausing deal schedule {schedule_id}: {str(e)}")
+            logger.error(f"Error pausing Facebook schedule {schedule_id}: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to pause deal schedule: {str(e)}"
+                detail=f"Failed to pause Facebook schedule: {str(e)}"
             )
 
     @staticmethod
     async def resume_schedule(schedule_id: str) -> dict:
-        """
-        Resume a paused deal schedule (set status to ACTIVE).
-        Now adds the schedule back to the unified scheduler.
-        """
         try:
-            schedule = await DealScrapeSchedule.get(schedule_id)
+            schedule = await FacebookScrapeSchedule.get(schedule_id)
             if not schedule:
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Deal schedule {schedule_id} not found"
+                    detail=f"Facebook schedule {schedule_id} not found"
                 )
             
             if schedule.status == ScheduleStatus.ACTIVE:
-                return {"message": f"Deal schedule {schedule_id} is already active"}
+                return {"message": f"Facebook schedule {schedule_id} is already active"}
             
             schedule.status = ScheduleStatus.ACTIVE
             schedule.next_run_at = schedule.calculate_next_run()
@@ -314,40 +298,38 @@ class DealScheduleController:
             # Save and sync with scheduler (will add to scheduler due to ACTIVE status)
             await schedule.save()
             
-            cities_info = ", ".join(schedule.cities)
-            logger.info(f"Resumed deal schedule {schedule_id} for cities: {cities_info} and added to unified scheduler")
+            keywords_info = ", ".join(schedule.keywords)
+            logger.info(f"Resumed Facebook schedule {schedule_id} for keywords: {keywords_info} and added to unified scheduler")
             
-            return {"message": f"Deal schedule {schedule_id} resumed successfully"}
+            return {"message": f"Facebook schedule {schedule_id} resumed successfully"}
             
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error resuming deal schedule {schedule_id}: {str(e)}")
+            logger.error(f"Error resuming Facebook schedule {schedule_id}: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to resume deal schedule: {str(e)}"
+                detail=f"Failed to resume Facebook schedule: {str(e)}"
             )
     
     @staticmethod
-    async def update_schedule(schedule_id: str, request: DealScheduleUpdateRequest) -> DealScheduleResponse:
-        """
-        Update an existing deal schedule with partial data.
-        Now syncs changes with the unified scheduler.
-        """
+    async def update_schedule(schedule_id: str, request: FBScheduleUpdateRequest) -> FBScheduleResponse:
         try:
-            schedule = await DealScrapeSchedule.get(schedule_id)
+            schedule = await FacebookScrapeSchedule.get(schedule_id)
             if not schedule:
                 raise HTTPException(
                     status_code=404, 
-                    detail=f"Deal schedule {schedule_id} not found"
+                    detail=f"Facebook schedule {schedule_id} not found"
                 )
             
             # Track if timing-related fields changed
             timing_changed = False
             
             # Update only provided fields
-            if request.cities is not None:
-                schedule.cities = sorted(request.cities)
+            if request.keywords is not None:
+                schedule.keywords = request.keywords
+            if request.days is not None:
+                schedule.days = request.days
             if request.schedule_name is not None:
                 schedule.schedule_name = request.schedule_name
             if request.day_of_week is not None:
@@ -369,11 +351,12 @@ class DealScheduleController:
             # Save and sync with scheduler
             await schedule.save()
             
-            logger.info(f"Updated deal schedule {schedule_id} and synced with unified scheduler")
+            logger.info(f"Updated Facebook schedule {schedule_id} and synced with unified scheduler")
             
-            return DealScheduleResponse(
+            return FBScheduleResponse(
                 id=str(schedule.id),
-                cities=schedule.cities,
+                keywords=schedule.keywords,
+                days=schedule.days,
                 schedule_name=schedule.schedule_name,
                 day_of_week=schedule.day_of_week,
                 time_of_day=schedule.time_of_day,
@@ -392,8 +375,8 @@ class DealScheduleController:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error updating deal schedule {schedule_id}: {str(e)}")
+            logger.error(f"Error updating Facebook schedule {schedule_id}: {str(e)}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"Failed to update deal schedule: {str(e)}"
+                detail=f"Failed to update Facebook schedule: {str(e)}"
             )
