@@ -1,18 +1,26 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from app.models.base import DataResponse, TaskStatus
 
 class ScrapingRequest(BaseModel):
-    cluster_ids: List[str] = Field(
-        description="List of cluster IDs to scrape",
-        example=["1.1", "1.2", "2.1"],
-        min_items=1
+    cluster_ids: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Dictionary mapping cluster IDs to their respective links",
+        example={
+            "1.1": ["https://example.com/link1", "https://example.com/link2"],
+            "1.2": ["https://example.com/link3"],
+            "2.1": ["https://example.com/link4", "https://example.com/link5"]
+        }
     )
-    years: List[str] = Field(
-        default=[], 
-        description="List of years for file downloading (empty means no downloading)",
-        example=["2023", "2024", "2025"]
+    years: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Dictionary mapping years (including 'No Year') to their respective links",
+        example={
+            "2023": ["https://example.com/2023_link1", "https://example.com/2023_link2"],
+            "2024": ["https://example.com/2024_link1"],
+            "No Year": ["https://example.com/no_year_link1", "https://example.com/no_year_link2"]
+        }
     )
     crawl_task_id: Optional[str] = Field(
         default=None,
@@ -24,21 +32,51 @@ class ScrapingRequest(BaseModel):
     def validate_cluster_ids(cls, v):
         if not v:
             raise ValueError('At least one cluster ID must be provided')
+        
+        for cluster_id, links in v.items():
+            if not cluster_id or not cluster_id.strip():
+                raise ValueError('Cluster ID cannot be empty')
+            if not links:
+                raise ValueError(f'Cluster ID "{cluster_id}" must have at least one link')
+            if not all(isinstance(link, str) and link.strip() for link in links):
+                raise ValueError(f'All links for cluster ID "{cluster_id}" must be non-empty strings')
+        
         return v
     
     @validator('years')
     def validate_years(cls, v):
-        for year in v:
-            if not year.isdigit() or len(year) != 4:
-                if year != "No Year":
-                    raise ValueError(f'Invalid year format: {year}. Must be 4 digits or "No Year"')
+        for year, links in v.items():
+            if year != "No Year" and (not year.isdigit() or len(year) != 4):
+                raise ValueError(f'Invalid year format: "{year}". Must be 4 digits or "No Year"')
+
+            if not links:
+                raise ValueError(f'Year "{year}" must have at least one link')
+            if not all(isinstance(link, str) and link.strip() for link in links):
+                raise ValueError(f'All links for year "{year}" must be non-empty strings')
+        
+        return v
+    
+    @validator('cluster_ids', 'years')
+    def validate_at_least_one_target(cls, v, values, field):
+        if field.name == 'years': 
+            cluster_ids = values.get('cluster_ids', {})
+            if not cluster_ids and not v:
+                raise ValueError('At least one cluster ID or year must be provided')
         return v
     
     class Config:
         schema_extra = {
             "example": {
-                "cluster_ids": ["1.1", "1.2", "2.1"],
-                "years": ["2023", "2024", "2025"],
+                "cluster_ids": {
+                    "1.1": ["https://example.com/cluster1_link1", "https://example.com/cluster1_link2"],
+                    "1.2": ["https://example.com/cluster2_link1"],
+                    "2.1": ["https://example.com/cluster3_link1", "https://example.com/cluster3_link2"]
+                },
+                "years": {
+                    "2023": ["https://example.com/2023_file1.pdf", "https://example.com/2023_file2.pdf"],
+                    "2024": ["https://example.com/2024_file1.pdf"],
+                    "No Year": ["https://example.com/misc_file1.pdf", "https://example.com/misc_file2.pdf"]
+                },
                 "crawl_task_id": "123e4567-e89b-12d3-a456-426614174000"
             }
         }
