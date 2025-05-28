@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ValidationInfo
 from datetime import datetime
 from app.models.base import DataResponse, TaskStatus
 
@@ -28,8 +28,9 @@ class ScrapingRequest(BaseModel):
         example="123e4567-e89b-12d3-a456-426614174000"
     )
     
-    @validator('cluster_ids')
-    def validate_cluster_ids(cls, v):
+    @field_validator('cluster_ids')
+    @classmethod
+    def validate_cluster_ids(cls, v: Dict[str, List[str]]) -> Dict[str, List[str]]:
         if not v:
             raise ValueError('At least one cluster ID must be provided')
         
@@ -43,8 +44,9 @@ class ScrapingRequest(BaseModel):
         
         return v
     
-    @validator('years')
-    def validate_years(cls, v):
+    @field_validator('years')
+    @classmethod
+    def validate_years(cls, v: Dict[str, List[str]]) -> Dict[str, List[str]]:
         for year, links in v.items():
             if year != "No Year" and (not year.isdigit() or len(year) != 4):
                 raise ValueError(f'Invalid year format: "{year}". Must be 4 digits or "No Year"')
@@ -56,16 +58,16 @@ class ScrapingRequest(BaseModel):
         
         return v
     
-    @validator('cluster_ids', 'years')
-    def validate_at_least_one_target(cls, v, values, field):
-        if field.name == 'years': 
-            cluster_ids = values.get('cluster_ids', {})
-            if not cluster_ids and not v:
-                raise ValueError('At least one cluster ID or year must be provided')
+    @field_validator('years')
+    @classmethod
+    def validate_at_least_one_target(cls, v: Dict[str, List[str]], info: ValidationInfo) -> Dict[str, List[str]]:
+        cluster_ids = info.data.get('cluster_ids', {})
+        if not cluster_ids and not v:
+            raise ValueError('At least one cluster ID or year must be provided')
         return v
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "cluster_ids": {
                     "1.1": ["https://example.com/cluster1_link1", "https://example.com/cluster1_link2"],
