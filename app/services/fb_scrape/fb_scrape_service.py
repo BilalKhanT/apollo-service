@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import requests
 import re
 import threading
@@ -11,10 +10,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Callable, Tuple
 
 class FacebookScrapingService:
-    """
-    Enhanced Facebook Scraping Service with parallel processing capabilities.
-    FIXED: Now properly collects and returns post data for database storage.
-    """
     
     def __init__(
         self,
@@ -51,22 +46,20 @@ class FacebookScrapingService:
         self.error = None
         
         # Data storage - FIXED: Proper initialization
-        self.all_posts = []  # Will store actual post data for database
-        self.processed_posts_data = []  # FIXED: Store processed posts for database
+        self.all_posts = []
+        self.processed_posts_data = []  # Store processed posts for database
         self.category_counts = {}
         self.keyword_matches = {}
         
         # Thread safety
         self.counter_lock = threading.Lock()
         self.results_lock = threading.Lock()
-        self.posts_data_lock = threading.Lock()  # FIXED: Lock for posts data
-        self.stop_event = threading.Event()
+        self.posts_data_lock = threading.Lock()
+        self.stop_event = threading.Event()  # CRITICAL: Stop event for graceful shutdown
         
         # For task manager integration
         self.task_id = None
         self.task_manager = None
-        
-        # For callback function
         self.progress_callback = None
         
         self.logger.info(f"FacebookScrapingService initialized with output_dir={output_dir}, max_workers={max_workers}, batch_size={batch_size}")
@@ -76,9 +69,7 @@ class FacebookScrapingService:
         logger = logging.getLogger("FacebookScrapingService")
         logger.setLevel(logging.INFO)
         
-        # Only add handler if not already added
         if not logger.handlers:
-            # Create console handler
             handler = logging.StreamHandler()
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
@@ -132,11 +123,9 @@ class FacebookScrapingService:
         # Send to task manager if available
         if self.task_id:
             try:
-                # Try to import and use the task manager
                 from app.utils.task_manager import task_manager
                 self.task_manager = task_manager
                 
-                # Update task status with progress and partial results
                 task_manager.update_task_status(
                     self.task_id,
                     progress=self.progress,
@@ -151,7 +140,6 @@ class FacebookScrapingService:
                     }
                 )
                 
-                # Add log entry for progress milestones
                 if (self.posts_processed % (self.progress_update_interval * 2) == 0 or force) and self.task_manager:
                     task_manager.publish_log(
                         self.task_id,
@@ -170,7 +158,7 @@ class FacebookScrapingService:
             except Exception as e:
                 self.logger.warning(f"Error in progress callback: {str(e)}")
         
-        # Always log progress for significant milestones or on force
+        # Log progress for significant milestones or on force
         if self.posts_processed % (self.progress_update_interval * 2) == 0 or force:
             self.logger.info(
                 f"Progress: {self.posts_processed}/{self.posts_found} posts processed, "
@@ -257,7 +245,11 @@ class FacebookScrapingService:
             return "other"
 
     def get_all_posts(self, start_date: str, end_date: str, keywords: List[str]) -> List[Dict[str, Any]]:
-        """Retrieve Facebook posts for the page, filtered by date range and keywords."""
+        """
+        Retrieve Facebook posts for the page, filtered by date range and keywords.
+        FIXED: Enhanced stop event handling during API calls to prevent database saves
+        when tasks are stopped.
+        """
         base_url = f"{self.base_url}/{self.api_version}/{self.page_id}/feed"
         
         start_timestamp = int(time.mktime(datetime.strptime(start_date, "%Y-%m-%d").timetuple()))
@@ -274,15 +266,37 @@ class FacebookScrapingService:
         filtered_posts = []
         next_url = base_url
         
-        # This remains sequential due to Facebook API rate limits
-        while next_url and not self.stop_event.is_set():
+        # FIXED: Track API call progress for better stop event handling
+        api_call_count = 0
+        max_api_calls = 100  # Reasonable limit to prevent infinite loops
+        
+        while next_url and not self.stop_event.is_set() and api_call_count < max_api_calls:
+            # FIXED: Check stop event before each API call
+            if self.stop_event.is_set():
+                self.logger.info(f"Stop event detected during API calls after {api_call_count} calls")
+                break
+                
             try:
-                response = requests.get(next_url, params=params, timeout=30)
+                api_call_count += 1
+                
+                # FIXED: Use shorter timeout for better responsiveness
+                response = requests.get(next_url, params=params, timeout=10)
+                
+                # FIXED: Check stop event immediately after API call
+                if self.stop_event.is_set():
+                    self.logger.info(f"Stop event detected after API call {api_call_count}")
+                    break
+                    
                 response.raise_for_status()
                 data = response.json()
                 
                 if 'data' in data:
                     all_posts.extend(data['data'])
+                    
+                    # FIXED: Check stop event after processing each batch
+                    if self.stop_event.is_set():
+                        self.logger.info(f"Stop event detected after processing batch {api_call_count}")
+                        break
                     
                     if 'paging' in data and 'next' in data['paging']:
                         next_url = data['paging']['next']
@@ -291,18 +305,41 @@ class FacebookScrapingService:
                         next_url = None
                 else:
                     error_msg = data.get('error', {}).get('message', 'Unknown error')
-                    raise Exception(f"Facebook API error: {error_msg}")
                     
-                # Add small delay to respect API rate limits
-                time.sleep(0.1)
+                    # FIXED: Check if this is due to stop event
+                    if self.stop_event.is_set():
+                        self.logger.info("API error after stop event was set, likely due to stopping")
+                        break
+                    else:
+                        raise Exception(f"Facebook API error: {error_msg}")
+                        
+                # FIXED: Shorter delay but check stop event more frequently
+                time.sleep(0.05)  # 50ms instead of 100ms
                 
+                # FIXED: Check stop event after sleep
+                if self.stop_event.is_set():
+                    self.logger.info(f"Stop event detected after sleep, ending API calls")
+                    break
+                    
             except requests.exceptions.RequestException as e:
-                raise Exception(f"Facebook API request failed: {str(e)}")
+                # FIXED: Handle stop event during request exceptions
+                if self.stop_event.is_set():
+                    self.logger.info(f"Request exception after stop event: {str(e)}")
+                    break
+                else:
+                    raise Exception(f"Facebook API request failed: {str(e)}")
+        
+        # FIXED: Early return if stopped during API calls
+        if self.stop_event.is_set():
+            self.logger.info(f"Stopping API calls early due to stop event. Retrieved {len(all_posts)} posts so far.")
+            return []  # Return empty list to indicate stopped state
         
         # Filter posts based on keywords using loose matching
         for post in all_posts:
             if self.stop_event.is_set():
+                self.logger.info("Stop event detected during post filtering")
                 break
+                
             message = post.get('message', '')
             if self.has_loose_match(message, keywords):
                 filtered_posts.append(post)
@@ -314,7 +351,7 @@ class FacebookScrapingService:
                           final_output_dir: str) -> Dict[str, Any]:
         """
         Process a batch of posts in parallel.
-        FIXED: Now collects and returns post data for database storage.
+        FIXED: Proper stop event checking and post data collection.
         """
         batch_result = {
             "batch_id": batch_id,
@@ -322,14 +359,16 @@ class FacebookScrapingService:
             "posts_failed": 0,
             "category_counts": {},
             "keyword_matches": {keyword: {"loose_matches": 0, "strict_matches": 0} for keyword in keywords},
-            "processed_posts": []  # FIXED: Store processed posts for database
+            "processed_posts": []
         }
         
         try:
             self.logger.debug(f"Processing batch {batch_id} with {len(posts_batch)} posts")
             
             for post in posts_batch:
+                # FIXED: Check stop event at start of each post processing
                 if self.stop_event.is_set():
+                    self.logger.info(f"Stop event detected in batch {batch_id}, stopping post processing")
                     break
                     
                 try:
@@ -485,7 +524,8 @@ class FacebookScrapingService:
     ) -> Dict[str, Any]:
         """
         Run the complete Facebook scraping workflow with enhanced parallel processing.
-        FIXED: Now properly collects and returns post data for database storage.
+        FIXED: Proper stop event handling to return "stopped" status instead of "completed"
+        when the stop event is triggered.
         """
         # Set up task ID and callback
         if task_id:
@@ -506,9 +546,9 @@ class FacebookScrapingService:
         self.total_batches = 0
         self.error = None
         
-        # Clear previous data - FIXED: Proper initialization
+        # Clear previous data
         self.all_posts = []
-        self.processed_posts_data = []  # FIXED: Clear processed posts data
+        self.processed_posts_data = []
         self.category_counts = {}
         self.keyword_matches = {}
         
@@ -533,13 +573,59 @@ class FacebookScrapingService:
             self.status = "fetching_posts"
             self.publish_progress(force=True)
             
+            # FIXED: Check stop event before making API call
+            if self.stop_event.is_set():
+                self.logger.info("Stop event detected before API call")
+                self.status = "stopped"
+                self.progress = 95.0
+                self.publish_progress(force=True)
+                return {
+                    "status": "stopped",
+                    "posts_processed": 0,
+                    "posts_found": 0,
+                    "posts_failed": 0,
+                    "execution_time_seconds": time.time() - self.start_time,
+                    "posts_data": []
+                }
+            
             # Get all posts using loose matching for keywords (sequential due to API limits)
             self.logger.info(f"Fetching posts from {start_date} to {end_date}")
             posts = self.get_all_posts(start_date, end_date, keywords)
+            
+            # FIXED: Check stop event immediately after API call
+            if self.stop_event.is_set():
+                self.logger.info("Stop event detected after API call")
+                self.status = "stopped"
+                self.progress = 95.0
+                self.publish_progress(force=True)
+                return {
+                    "status": "stopped",
+                    "posts_processed": 0,
+                    "posts_found": len(posts) if posts else 0,
+                    "posts_failed": 0,
+                    "execution_time_seconds": time.time() - self.start_time,
+                    "posts_data": []
+                }
+            
             self.posts_found = len(posts)
             self.all_posts = posts
             
             self.logger.info(f"Retrieved {len(posts)} posts with loose keyword matching")
+            
+            # FIXED: Check stop event before processing
+            if self.stop_event.is_set():
+                self.logger.info("Stop event detected before processing posts")
+                self.status = "stopped"
+                self.progress = 95.0
+                self.publish_progress(force=True)
+                return {
+                    "status": "stopped",
+                    "posts_processed": 0,
+                    "posts_found": self.posts_found,
+                    "posts_failed": 0,
+                    "execution_time_seconds": time.time() - self.start_time,
+                    "posts_data": []
+                }
             
             if self.posts_found == 0:
                 self.logger.warning("No posts found matching the criteria")
@@ -558,7 +644,7 @@ class FacebookScrapingService:
                     "output_directory": final_output_dir,
                     "execution_time_seconds": time.time() - self.start_time,
                     "date_range": {"start_date": start_date, "end_date": end_date},
-                    "posts_data": []  # FIXED: Return empty posts data
+                    "posts_data": []
                 }
             
             # Update status for parallel processing phase
@@ -631,21 +717,23 @@ class FacebookScrapingService:
             if not self.stop_event.is_set():
                 self._create_summary_file(final_output_dir, keywords, start_date, end_date)
             
-            # Update status
+            # FIXED: Final status determination
             if self.stop_event.is_set():
                 self.status = "stopped"
                 self.progress = 95.0
+                self.logger.info("Facebook scraping process was stopped by user")
             else:
                 self.status = "completed"
                 self.progress = 100.0
+                self.logger.info("Facebook scraping process completed successfully")
             
             self.publish_progress(force=True)
             
-            # Prepare final results - FIXED: Include post data
+            # FIXED: Prepare final results with correct status
             execution_time = time.time() - self.start_time
             
             results = {
-                "status": self.status,
+                "status": self.status,  # Will be either "stopped" or "completed"
                 "posts_processed": self.posts_processed,
                 "posts_found": self.posts_found,
                 "posts_failed": self.posts_failed,
@@ -657,11 +745,11 @@ class FacebookScrapingService:
                 "batches_processed": self.current_batch,
                 "total_batches": self.total_batches,
                 "error": self.error,
-                "posts_data": self.processed_posts_data  # FIXED: Return processed posts data
+                "posts_data": self.processed_posts_data if self.status == "completed" else []  # Only return posts if completed
             }
             
             self.logger.info(
-                f"Facebook scraping completed. Processed {self.posts_processed} posts "
+                f"Facebook scraping {self.status}. Processed {self.posts_processed} posts "
                 f"({self.posts_failed} failed) in {self.current_batch} batches "
                 f"using {self.max_workers} workers in {execution_time:.2f} seconds. "
                 f"Collected {len(self.processed_posts_data)} posts for database."
@@ -685,7 +773,7 @@ class FacebookScrapingService:
                 "posts_found": self.posts_found,
                 "posts_failed": self.posts_failed,
                 "execution_time_seconds": time.time() - self.start_time,
-                "posts_data": self.processed_posts_data  # FIXED: Return whatever posts we have
+                "posts_data": []  # No posts data on failure
             }
 
     def _create_summary_file(self, output_dir: str, keywords: List[str], start_date: str, end_date: str):
@@ -725,12 +813,19 @@ class FacebookScrapingService:
             self.logger.error(f"Error creating summary file: {str(e)}")
 
     def stop(self) -> bool:
-        """Stop the Facebook scraping process gracefully."""
+        """
+        Stop the Facebook scraping process gracefully.
+        FIXED: Improved stop mechanism to ensure status becomes "stopped"
+        """
         self.logger.info("Stopping Facebook scraping process...")
         self.stop_event.set()
         
         # Wait a moment for current operations to finish
         time.sleep(1)
+        
+        # Update status to stopped
+        self.status = "stopped"
+        self.progress = 95.0
         
         return True
 

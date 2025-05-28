@@ -1553,17 +1553,7 @@ class ApolloOrchestrator:
     ) -> Dict[str, Any]:
         """
         Run the complete Facebook scraping workflow with enhanced progress tracking.
-        Enhanced with real-time WebSocket updates while preserving all existing functionality.
-        
-        Args:
-            task_id: Task ID for tracking progress
-            keywords: List of keywords to filter posts
-            days: Number of days to look back for posts
-            access_token: Facebook API access token
-            page_id: Facebook page ID to scrape
-            
-        Returns:
-            Dictionary with Facebook scraping results
+        CRITICAL FIX: Only save to database when status is "completed", not "stopped"
         """
         # Start real-time publishing for this task (WebSocket enhancement)
         await self._start_realtime_publishing(task_id, interval=2.0)
@@ -1628,7 +1618,7 @@ class ApolloOrchestrator:
                 task_id
             )
             
-            # Check if scraping was successful
+            # Check if scraping failed
             if scraping_result["status"] == "failed":
                 error_msg = scraping_result.get("error", "Facebook scraping failed")
                 self.publish_log(task_id, error_msg, "error")
@@ -1647,7 +1637,7 @@ class ApolloOrchestrator:
                 )
                 return task_manager.get_task_status(task_id)
             
-            # Check if scraping was stopped
+            # CRITICAL FIX: Check if scraping was stopped - DO NOT save to database
             if scraping_result["status"] == "stopped":
                 self.publish_log(task_id, "Facebook scraping was stopped by user", "info")
                 
@@ -1655,22 +1645,46 @@ class ApolloOrchestrator:
                 if hasattr(self, f"facebook_scrapper_{task_id}"):
                     delattr(self, f"facebook_scrapper_{task_id}")
                 
-                # Update task status
+                # Update task status to stopped
                 task_manager.update_task_status(
                     task_id,
                     status="stopped",
                     progress=95.0,
                     result={
                         **task_manager.get_task_status(task_id)["result"],
-                        "facebook_scrape_results": scraping_result
+                        "facebook_scrape_results": scraping_result,
+                        "stopped_at": datetime.now().isoformat(),
+                        "stopped_gracefully": True
                     }
+                )
+                
+                # CRITICAL: Return early without saving to database
+                self.publish_log(task_id, "Facebook scraping stopped. Results NOT saved to database.", "info")
+                return task_manager.get_task_status(task_id)
+            
+            # CRITICAL FIX: Only proceed to save to database if status is "completed"
+            if scraping_result["status"] != "completed":
+                error_msg = f"Unexpected scraping status: {scraping_result['status']}"
+                self.publish_log(task_id, error_msg, "error")
+                
+                # Clean up Facebook scrapper reference
+                if hasattr(self, f"facebook_scrapper_{task_id}"):
+                    delattr(self, f"facebook_scrapper_{task_id}")
+                
+                # Stop real-time publishing on error
+                await self._stop_realtime_publishing(task_id)
+                
+                task_manager.update_task_status(
+                    task_id,
+                    status="failed",
+                    error=error_msg
                 )
                 return task_manager.get_task_status(task_id)
             
-            # Log completion of scraping
+            # Log completion of scraping (only for completed status)
             self.publish_log(
                 task_id,
-                f"Facebook scraping completed. Processed {scraping_result['posts_processed']} posts, "
+                f"Facebook scraping completed successfully. Processed {scraping_result['posts_processed']} posts, "
                 f"found {scraping_result['posts_found']} matching posts.",
                 "info"
             )
@@ -1686,7 +1700,7 @@ class ApolloOrchestrator:
                 }
             )
             
-            # === SAVE TO DATABASE (95-100%) ===
+            # === SAVE TO DATABASE (95-100%) - ONLY FOR COMPLETED TASKS ===
             self.publish_log(task_id, "Saving Facebook scraping results to database...", "info")
             
             try:
@@ -1715,7 +1729,7 @@ class ApolloOrchestrator:
                     }
                     posts_data.append(post_data)
                 
-                # Save to database - ONLY ON SUCCESS
+                # Save to database - ONLY ON SUCCESSFUL COMPLETION
                 await self.save_facebook_result(
                     task_id=task_id,
                     keywords_requested=keywords_requested,
@@ -1749,7 +1763,7 @@ class ApolloOrchestrator:
                 )
                 return task_manager.get_task_status(task_id)
             
-            # === COMPLETION (100%) ===
+            # === COMPLETION (100%) - ONLY FOR SUCCESSFULLY COMPLETED TASKS ===
             # Update status to completed
             task_manager.update_task_status(
                 task_id,
@@ -1767,9 +1781,6 @@ class ApolloOrchestrator:
             # Clean up Facebook scrapper reference
             if hasattr(self, f"facebook_scrapper_{task_id}"):
                 delattr(self, f"facebook_scrapper_{task_id}")
-            
-            # Real-time publisher will auto-stop when task completes
-            # No need to manually stop here as it will be handled automatically
             
             # Return final status
             return task_manager.get_task_status(task_id)
@@ -1796,13 +1807,7 @@ class ApolloOrchestrator:
     def stop_facebook_scraping(self, task_id: str) -> Dict[str, Any]:
         """
         Stop a running Facebook scraping process gracefully with proper cleanup.
-        Enhanced with real-time publishing cleanup while preserving existing functionality.
-
-        Args:
-            task_id: ID of the task to stop
-        
-        Returns:
-            Dictionary with stop result
+        FIXED: Enhanced stop mechanism with better status handling
         """
         self.publish_log(task_id, f"Attempting to stop Facebook scraping task {task_id} gracefully...", "info")
 
@@ -1918,21 +1923,21 @@ class ApolloOrchestrator:
             return {"success": False, "message": error_msg}
 
     async def save_facebook_result(
-    self,
-    task_id: str,
-    keywords_requested: List[str],
-    days_requested: int,
-    posts_processed: int,
-    categories_found: Dict[str, int],
-    keyword_matches: Dict[str, Dict[str, int]],
-    execution_time_seconds: float,
-    output_directory: str,
-    date_range: Dict[str, str],
-    posts_data: List[Dict[str, Any]]
-) -> None:
+        self,
+        task_id: str,
+        keywords_requested: List[str],
+        days_requested: int,
+        posts_processed: int,
+        categories_found: Dict[str, int],
+        keyword_matches: Dict[str, Dict[str, int]],
+        execution_time_seconds: float,
+        output_directory: str,
+        date_range: Dict[str, str],
+        posts_data: List[Dict[str, Any]]
+    ) -> None:
         """
         Save Facebook scraping results to database.
-        FIXED: Correct Beanie query syntax and proper object creation
+        FIXED: Enhanced validation and error handling
         """
         try:
             # Import here to avoid circular imports
@@ -1970,7 +1975,7 @@ class ApolloOrchestrator:
                 try:
                     # Create FacebookPostData object with proper field mapping
                     post_obj = FacebookPostData(
-                        post_id=post.get("id", "unknown"),  # Map 'id' to 'post_id'
+                        post_id=post.get("post_id", post.get("id", "unknown")),  # Handle both field names
                         message=post.get("message", ""),
                         created_time=post.get("created_time", ""),
                         category=post.get("category", "other"),
