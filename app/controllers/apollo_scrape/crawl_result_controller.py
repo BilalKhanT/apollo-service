@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import HTTPException
 import logging
-from app.models.database.crawl_result_model import CrawlResult
+from app.models.database.apollo_scraper.crawl_result_model import CrawlResult
 
 logger = logging.getLogger(__name__)
 

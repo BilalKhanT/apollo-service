@@ -2,9 +2,8 @@ from typing import Optional
 from fastapi import HTTPException
 import logging
 
-from app.models.database.crawl_schedule_model import CrawlSchedule, ScheduleStatus
-from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule, ScheduleStatus
-from app.models.schedule_model import (
+from app.models.database.apollo_scraper.crawl_schedule_model import CrawlSchedule, ScheduleStatus
+from app.models.apollo_scrape.schedule_model import (
     CrawlScheduleRequest, 
     CrawlScheduleResponse, 
     ScheduleListResponse,
@@ -34,9 +33,12 @@ class ScheduleController:
                 existing_schedule.depth_limit = request.depth_limit
                 existing_schedule.domain_restriction = request.domain_restriction
                 existing_schedule.scrape_pdfs_and_xls = request.scrape_pdfs_and_xls
+                
+                # Calculate next run for display purposes
                 existing_schedule.next_run_at = existing_schedule.calculate_next_run()
                 existing_schedule.update_timestamp()
                 
+                # Save will automatically sync with the unified scheduler
                 await existing_schedule.save()
                 schedule = existing_schedule
                 
@@ -57,9 +59,11 @@ class ScheduleController:
                     status=ScheduleStatus.ACTIVE
                 )
 
+                # Calculate next run for display purposes
                 schedule.next_run_at = schedule.calculate_next_run()
                 
-                await schedule.insert()
+                # Insert will automatically sync with the unified scheduler
+                await schedule.save()
 
             return CrawlScheduleResponse(
                 id=str(schedule.id),
@@ -193,6 +197,7 @@ class ScheduleController:
                     detail=f"Schedule {schedule_id} not found"
                 )
             
+            # Delete will automatically remove from the unified scheduler
             await schedule.delete()
             logger.info(f"Deleted schedule {schedule_id} for {schedule.base_url}")
             
@@ -254,6 +259,8 @@ class ScheduleController:
             
             schedule.status = ScheduleStatus.PAUSED
             schedule.update_timestamp()
+            
+            # Save will automatically sync with the unified scheduler (removes the job)
             await schedule.save()
             
             logger.info(f"Paused schedule {schedule_id} for {schedule.base_url}")
@@ -284,8 +291,12 @@ class ScheduleController:
                 return {"message": f"Schedule {schedule_id} is already active"}
             
             schedule.status = ScheduleStatus.ACTIVE
+            
+            # Recalculate next run for display purposes
             schedule.next_run_at = schedule.calculate_next_run()
             schedule.update_timestamp()
+            
+            # Save will automatically sync with the unified scheduler (adds the job back)
             await schedule.save()
             
             logger.info(f"Resumed schedule {schedule_id} for {schedule.base_url}")

@@ -1,5 +1,5 @@
 from app.utils.task_manager import task_manager
-from app.models.log_model import LogResponse
+from app.models.apollo_scrape.log_model import LogResponse
 from fastapi import HTTPException
 
 class LogsController:

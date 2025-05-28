@@ -4,10 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from app.api.routes import crawl, cluster, scrape, logs, schedule, deal, deal_schedule
+from app.api.routes import crawl, cluster, scrape, logs, schedule, deal, deal_schedule, fb_scrape, fb_schedule
 from app.utils.database import connect_to_mongo, close_mongo_connection
-from app.services.schedule_service import schedule_service
-from app.services.restaurant_deal.deal_schedule_service import deal_schedule_service
+from app.services.schedule_service import scheduler_service
 from app.utils.socket_manager import socket_manager
 
 load_dotenv()
@@ -24,10 +23,10 @@ async def lifespan(app: FastAPI):
     try:
         await connect_to_mongo()
         logger.info("Database connection established successfully")
-        await schedule_service.start()
-        logger.info("Schedule service started successfully")
-        await deal_schedule_service.start()
-        logger.info("Deal schedule service started successfully")
+        
+        await scheduler_service.start()
+        logger.info("Unified scheduler service started successfully")
+        
         try:
             from app.utils.realtime_publisher import realtime_publisher
             await realtime_publisher.start()
@@ -54,11 +53,8 @@ async def lifespan(app: FastAPI):
             "warning"
         )
 
-        await schedule_service.stop()
-        logger.info("Schedule service stopped successfully")
-
-        await deal_schedule_service.stop()
-        logger.info("Deal schedule service stopped successfully")
+        await scheduler_service.stop()
+        logger.info("Unified scheduler service stopped successfully")
 
         await close_mongo_connection()
         logger.info("Database connection closed successfully")
@@ -68,8 +64,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Apollo Web Crawler API",
-    description="Apollo Web Scraper with Real-time WebSocket Updates and Scheduled Crawling",
-    version="2.2.0", 
+    description="Apollo Web Scraper with Real-time WebSocket Updates and Unified Scheduling",
+    version="2.3.0", 
     lifespan=lifespan
 )
 
@@ -84,10 +80,12 @@ app.add_middleware(
 app.include_router(crawl.router)
 app.include_router(cluster.router)
 app.include_router(scrape.router)
-app.include_router(logs.router)
+# app.include_router(logs.router)
 app.include_router(schedule.router)
 app.include_router(deal.router)
-app.include_router(deal_schedule.router)  # Added deal schedule router
+app.include_router(deal_schedule.router)
+app.include_router(fb_scrape.router)
+app.include_router(fb_schedule.router)
 
 socket_app = socketio.ASGIApp(
     socket_manager.sio,
@@ -108,8 +106,7 @@ async def health_check():
         logger.error(f"Database health check failed: {str(e)}")
         db_status = "error"
 
-    schedule_status = schedule_service.get_status()
-    deal_schedule_status = deal_schedule_service.get_status()
+    scheduler_status = scheduler_service.get_status()
 
     try:
         websocket_stats = socket_manager.get_stats()
@@ -124,13 +121,12 @@ async def health_check():
         "database": {
             "status": db_status
         },
-        "schedule_service": schedule_status,
-        "deal_schedule_service": deal_schedule_status,
+        "scheduler_service": scheduler_status,
         "websocket": {
             "status": websocket_status,
             "stats": websocket_stats
         },
-        "version": "0.0.1",
+        "version": "2.3.0",
     }
 
 app = socket_app

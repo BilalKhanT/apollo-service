@@ -33,7 +33,7 @@ class DealScrapeSchedule(Document):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_run_at: Optional[datetime] = None
-    next_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None  
     total_runs: int = Field(default=0)
     successful_runs: int = Field(default=0)
     failed_runs: int = Field(default=0)
@@ -89,6 +89,7 @@ class DealScrapeSchedule(Document):
         target_time = self.get_time_object()
 
         days_ahead = target_weekday - current_weekday
+        
         if days_ahead == 0 and not force_next_week:
             scheduled_time = karachi_tz.localize(datetime.combine(now_karachi.date(), target_time))
             buffer_time = now_karachi + timedelta(minutes=1)
@@ -108,7 +109,8 @@ class DealScrapeSchedule(Document):
         self.total_runs += 1
         self.next_run_at = self.calculate_next_run(force_next_week=True)
         self.update_timestamp()
-        logger.info(f"Marked run started for restaurant schedule {self.id}. Next run: {self.next_run_at}")
+        
+        logger.info(f"Marked run started for restaurant schedule {self.id}. Next run display: {self.next_run_at}")
 
     def mark_run_completed(self, success: bool, error: Optional[str] = None):
         if success:
@@ -118,3 +120,30 @@ class DealScrapeSchedule(Document):
             self.failed_runs += 1
             self.last_error = error
         self.update_timestamp()
+    
+    async def sync_with_scheduler(self):
+        try:
+            from app.services.schedule_service import scheduler_service, ScheduleType
+            
+            if self.status == ScheduleStatus.ACTIVE:
+                await scheduler_service.update_deal_schedule(self)
+            else:
+                await scheduler_service.remove_schedule(str(self.id), ScheduleType.DEAL_SCRAPE)
+                
+        except Exception as e:
+            logger.error(f"Error syncing deal schedule {self.id} with scheduler: {str(e)}")
+    
+    async def save(self, *args, **kwargs):
+        result = await super().save(*args, **kwargs)
+        await self.sync_with_scheduler()
+        
+        return result
+    
+    async def delete(self, *args, **kwargs):
+        try:
+            from app.services.schedule_service import scheduler_service, ScheduleType
+            await scheduler_service.remove_schedule(str(self.id), ScheduleType.DEAL_SCRAPE)
+        except Exception as e:
+            logger.error(f"Error removing deal schedule {self.id} from scheduler: {str(e)}")
+        
+        return await super().delete(*args, **kwargs)

@@ -3,31 +3,31 @@ from fastapi import APIRouter, HTTPException, Query, status
 from typing import Optional
 import logging
 
-from app.models.apollo_scrape.schedule_model import (
-    CrawlScheduleRequest, 
-    CrawlScheduleResponse, 
-    ScheduleListResponse,
-    ScheduleActionResponse,
+from app.models.fb_scrape.fb_scrape_schedule_model import (
+    FBScheduleRequest, 
+    FBScheduleResponse, 
+    FBScheduleListResponse,
+    FBScheduleActionResponse,
     ScheduleStatus
 )
 from app.models.base import ErrorResponse
-from app.controllers.apollo_scrape.schedule_controller import ScheduleController
+from app.controllers.fb_scrape.fb_schedule_controller import FBScheduleController
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/schedule", tags=["Scheduled Crawls"])
+router = APIRouter(prefix="/api/facebook/schedule", tags=["Facebook Scheduling"])
 
 @router.post(
     "",
-    response_model=CrawlScheduleResponse,
+    response_model=FBScheduleResponse,
     responses={
         201: {
-            "description": "Schedule created successfully",
-            "model": CrawlScheduleResponse
+            "description": "Facebook schedule created successfully",
+            "model": FBScheduleResponse
         },
         200: {
-            "description": "Schedule updated successfully", 
-            "model": CrawlScheduleResponse
+            "description": "Facebook schedule updated successfully", 
+            "model": FBScheduleResponse
         },
         400: {
             "description": "Invalid request parameters",
@@ -38,44 +38,44 @@ router = APIRouter(prefix="/api/schedule", tags=["Scheduled Crawls"])
             "model": ErrorResponse
         }
     },
-    summary="Create or update a crawl schedule",
-    description="Create a new crawl schedule or update an existing one for the same base URL."
+    summary="Create or update a Facebook scraping schedule",
+    description="Create a new Facebook scraping schedule or update an existing one for the same keywords combination."
 )
-async def create_or_update_schedule(request: CrawlScheduleRequest) -> CrawlScheduleResponse:
+async def create_or_update_facebook_schedule(request: FBScheduleRequest) -> FBScheduleResponse:
     try:
-        return await ScheduleController.create_or_update_schedule(request)
+        return await FBScheduleController.create_or_update_schedule(request)
     except HTTPException:
         raise
     except ValueError as e:
-        logger.error(f"Validation error creating schedule: {str(e)}")
+        logger.error(f"Validation error creating Facebook schedule: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid request parameters: {str(e)}"
         )
     except Exception as e:
-        logger.error(f"Error creating/updating schedule: {str(e)}")
+        logger.error(f"Error creating/updating Facebook schedule: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create/update schedule: {str(e)}"
+            detail=f"Failed to create/update Facebook schedule: {str(e)}"
         )
 
 @router.get(
     "",
-    response_model=ScheduleListResponse,
+    response_model=FBScheduleListResponse,
     responses={
         200: {
-            "description": "Schedules retrieved successfully",
-            "model": ScheduleListResponse
+            "description": "Facebook schedules retrieved successfully",
+            "model": FBScheduleListResponse
         },
         500: {
             "description": "Internal server error",
             "model": ErrorResponse
         }
     },
-    summary="List all crawl schedules",
-    description="Retrieve a paginated list of all crawl schedules with optional status filtering."
+    summary="List all Facebook scraping schedules",
+    description="Retrieve a paginated list of all Facebook scraping schedules with optional status filtering."
 )
-async def list_schedules(
+async def list_facebook_schedules(
     status: Optional[ScheduleStatus] = Query(
         None, 
         description="Filter schedules by status",
@@ -94,9 +94,11 @@ async def list_schedules(
         description="Number of schedules to skip for pagination",
         example=0
     )
-) -> ScheduleListResponse:
+) -> FBScheduleListResponse:
     try:
-        response = await ScheduleController.list_schedules(status=status, limit=limit, skip=skip)
+        response = await FBScheduleController.list_schedules(status=status, limit=limit, skip=skip)
+        
+        # Convert timestamps to Karachi time for display
         karachi_offset = timedelta(hours=5)
         if hasattr(response, 'schedules') and response.schedules:
             for schedule in response.schedules:
@@ -108,19 +110,19 @@ async def list_schedules(
 
         return response
     except Exception as e:
-        logger.error(f"Error listing schedules: {str(e)}")
+        logger.error(f"Error listing Facebook schedules: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list schedules: {str(e)}"
+            detail=f"Failed to list Facebook schedules: {str(e)}"
         )
-
+    
 @router.delete(
     "/{schedule_id}",
-    response_model=ScheduleActionResponse,
+    response_model=FBScheduleActionResponse,
     responses={
         200: {
-            "description": "Schedule deleted successfully",
-            "model": ScheduleActionResponse
+            "description": "Facebook schedule deleted successfully",
+            "model": FBScheduleActionResponse
         },
         404: {
             "description": "Schedule not found",
@@ -131,13 +133,13 @@ async def list_schedules(
             "model": ErrorResponse
         }
     },
-    summary="Delete a crawl schedule",
-    description="Permanently delete a crawl schedule. This action cannot be undone."
+    summary="Delete a Facebook schedule",
+    description="Permanently delete a Facebook scraping schedule. This action cannot be undone."
 )
-async def delete_schedule(schedule_id: str) -> ScheduleActionResponse:
+async def delete_facebook_schedule(schedule_id: str) -> FBScheduleActionResponse:
     try:
-        result = await ScheduleController.delete_schedule(schedule_id)
-        return ScheduleActionResponse(
+        result = await FBScheduleController.delete_schedule(schedule_id)
+        return FBScheduleActionResponse(
             success=True,
             message=result["message"],
             schedule_id=schedule_id,
@@ -146,19 +148,19 @@ async def delete_schedule(schedule_id: str) -> ScheduleActionResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting schedule {schedule_id}: {str(e)}")
+        logger.error(f"Error deleting Facebook schedule {schedule_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete schedule: {str(e)}"
+            detail=f"Failed to delete Facebook schedule: {str(e)}"
         )
 
 @router.post(
     "/{schedule_id}/pause",
-    response_model=ScheduleActionResponse,
+    response_model=FBScheduleActionResponse,
     responses={
         200: {
-            "description": "Schedule paused successfully",
-            "model": ScheduleActionResponse
+            "description": "Facebook schedule paused successfully",
+            "model": FBScheduleActionResponse
         },
         404: {
             "description": "Schedule not found",
@@ -169,13 +171,13 @@ async def delete_schedule(schedule_id: str) -> ScheduleActionResponse:
             "model": ErrorResponse
         }
     },
-    summary="Pause a crawl schedule",
+    summary="Pause a Facebook schedule",
     description="Pause a schedule to temporarily stop automatic execution. The schedule can be resumed later."
 )
-async def pause_schedule(schedule_id: str) -> ScheduleActionResponse:
+async def pause_facebook_schedule(schedule_id: str) -> FBScheduleActionResponse:
     try:
-        result = await ScheduleController.pause_schedule(schedule_id)
-        return ScheduleActionResponse(
+        result = await FBScheduleController.pause_schedule(schedule_id)
+        return FBScheduleActionResponse(
             success=True,
             message=result["message"],
             schedule_id=schedule_id,
@@ -184,19 +186,19 @@ async def pause_schedule(schedule_id: str) -> ScheduleActionResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error pausing schedule {schedule_id}: {str(e)}")
+        logger.error(f"Error pausing Facebook schedule {schedule_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to pause schedule: {str(e)}"
+            detail=f"Failed to pause Facebook schedule: {str(e)}"
         )
 
 @router.post(
     "/{schedule_id}/resume",
-    response_model=ScheduleActionResponse,
+    response_model=FBScheduleActionResponse,
     responses={
         200: {
-            "description": "Schedule resumed successfully",
-            "model": ScheduleActionResponse
+            "description": "Facebook schedule resumed successfully",
+            "model": FBScheduleActionResponse
         },
         404: {
             "description": "Schedule not found",
@@ -207,13 +209,13 @@ async def pause_schedule(schedule_id: str) -> ScheduleActionResponse:
             "model": ErrorResponse
         }
     },
-    summary="Resume a paused crawl schedule",
+    summary="Resume a paused Facebook schedule",
     description="Resume a paused schedule to restart automatic execution."
 )
-async def resume_schedule(schedule_id: str) -> ScheduleActionResponse:
+async def resume_facebook_schedule(schedule_id: str) -> FBScheduleActionResponse:
     try:
-        result = await ScheduleController.resume_schedule(schedule_id)
-        return ScheduleActionResponse(
+        result = await FBScheduleController.resume_schedule(schedule_id)
+        return FBScheduleActionResponse(
             success=True,
             message=result["message"],
             schedule_id=schedule_id,
@@ -222,8 +224,8 @@ async def resume_schedule(schedule_id: str) -> ScheduleActionResponse:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error resuming schedule {schedule_id}: {str(e)}")
+        logger.error(f"Error resuming Facebook schedule {schedule_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to resume schedule: {str(e)}"
+            detail=f"Failed to resume Facebook schedule: {str(e)}"
         )

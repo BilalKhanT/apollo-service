@@ -73,10 +73,12 @@ async def connect_to_mongo():
         logger.info("Successfully connected to MongoDB Atlas")
 
         # Import all models
-        from app.models.database.crawl_result_model import CrawlResult
-        from app.models.database.crawl_schedule_model import CrawlSchedule
+        from app.models.database.apollo_scraper.crawl_result_model import CrawlResult
+        from app.models.database.apollo_scraper.crawl_schedule_model import CrawlSchedule
         from app.models.database.restaurant_deal.restaurant_result_model import DealResult
         from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
+        from app.models.database.fb_scrape.fb_result_model import FacebookResult
+        from app.models.database.fb_scrape.fb_schedule_model import FacebookScrapeSchedule
 
         await init_beanie(
             database=db.database,
@@ -85,6 +87,8 @@ async def connect_to_mongo():
                 CrawlSchedule,
                 DealResult,
                 DealScrapeSchedule,
+                FacebookResult,
+                FacebookScrapeSchedule
             ]
         )
 

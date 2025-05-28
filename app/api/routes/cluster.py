@@ -1,8 +1,8 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
-from app.controllers.cluster_controller import ClusterController
-from app.controllers.crawl_result_controller import CrawlResultController
-from app.models.cluster_model import (
+from app.controllers.apollo_scrape.cluster_controller import ClusterController
+from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
+from app.models.apollo_scrape.cluster_model import (
     ClusterDetailResponse, 
     YearDetailResponse,
     ClustersListResponse
