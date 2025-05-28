@@ -70,11 +70,20 @@ from app.models.fb_scrape.fb_scrape_model import (
     FacebookStopResponse,
     FacebookResultsResponseMinimal
 )
+from app.models.fb_scrape.fb_scrape_schedule_model import (
+    FBScheduleRequest,
+    FBScheduleResponse,
+    FBScheduleUpdateRequest,
+    FBScheduleListResponse,
+    FBScheduleStatusResponse,
+    FBScheduleActionResponse,
+)
 from .database.apollo_scraper.crawl_result_model import CrawlResult
 from .database.apollo_scraper.crawl_schedule_model import CrawlSchedule
 from .database.restaurant_deal.restaurant_result_model import DealResult
 from .database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
 from .database.fb_scrape.fb_result_model import FacebookResult
+from .database.fb_scrape.fb_schedule_model import FacebookScrapeSchedule
 
 __all__ = [
     # Base models
@@ -130,6 +139,7 @@ __all__ = [
     'DealResult',
     'DealScrapeSchedule',
     'FacebookResult',
+    'FacebookScrapeSchedule',
 
     # Restaurant Deal models
     'DealScrapingRequest',
@@ -155,4 +165,12 @@ __all__ = [
     'FacebookResultsResponse',
     'FacebookStopResponse',
     'FacebookResultsResponseMinimal'
+
+    # FB Schedule
+    'FBScheduleRequest',
+    'FBScheduleResponse',
+    'FBScheduleUpdateRequest',
+    'FBScheduleListResponse',
+    'FBScheduleStatusResponse',
+    'FBScheduleActionResponse',
 ]
