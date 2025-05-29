@@ -36,7 +36,11 @@ SOCIAL_MEDIA_KEYWORDS: List[str] = [
 
 # Keywords to categorize as bank-related links
 # In production, these should be customized based on the target bank
-BANK_KEYWORDS: List[str] = ['ubl', 'united']
+#fbl
+BANK_KEYWORDS: List[str] = ['fbl', 'faysal']
+
+#ubl
+# BANK_KEYWORDS: List[str] = ['ubl', 'united']
 
 # URL clusterer settings
 CLUSTER_MIN_SIZE: int = int(os.getenv("CLUSTER_MIN_SIZE", "2"))
