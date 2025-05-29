@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, status
+import pytz
 from app.utils.task_manager import task_manager
 from app.utils.realtime_publisher import realtime_publisher
 from app.models.database.restaurant_deal.restaurant_result_model import DealResult
@@ -306,6 +307,9 @@ class DealScrapeController:
                 logger.warning(f"Could not get original creation time for task {task_id}, using current time")
                 original_created_at = datetime.utcnow()
 
+            karachi_tz = pytz.timezone('Asia/Karachi')
+            completed_at = datetime.now(karachi_tz).replace(tzinfo=None)
+
             deal_result = DealResult(
                 task_id=task_id,
                 cities_requested=cities_requested,
@@ -316,7 +320,7 @@ class DealScrapeController:
                 restaurants_data=restaurants_data,
                 summary_by_city=summary_by_city,
                 created_at=original_created_at,  
-                completed_at=datetime.utcnow()   
+                completed_at=completed_at  
             )
             
             await deal_result.insert()

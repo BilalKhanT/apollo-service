@@ -6,6 +6,8 @@ import traceback
 import asyncio
 from typing import Dict, Any, List, Optional
 import json
+
+import pytz
 from app.services.fb_scrape.fb_scrape_service import FacebookScrapingService
 from app.utils.task_manager import task_manager
 from app.utils.config import (
@@ -1658,6 +1660,9 @@ class ApolloOrchestrator:
                 self.logger.warning(f"Could not get original creation time for task {task_id}, using current time")
                 original_created_at = datetime.utcnow()
             
+            karachi_tz = pytz.timezone('Asia/Karachi')
+            completed_at = datetime.now(karachi_tz).replace(tzinfo=None)
+            
             processed_posts_data = []
             for post in posts_data:
                 try:
@@ -1697,7 +1702,7 @@ class ApolloOrchestrator:
                 date_range=date_range or {},
                 posts_data=processed_posts_data,  
                 created_at=original_created_at,
-                completed_at=datetime.utcnow()
+                completed_at=completed_at
             )
             
             self.logger.info(f"Created FacebookResult object, attempting to save to database...")
