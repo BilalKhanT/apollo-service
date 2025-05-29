@@ -17,7 +17,7 @@ from app.utils.config import (
     DEFAULT_URL_PATTERNS_TO_IGNORE, FILE_EXTENSIONS,
     SOCIAL_MEDIA_KEYWORDS, BANK_KEYWORDS, CLUSTER_MIN_SIZE,
     CLUSTER_PATH_DEPTH, CLUSTER_SIMILARITY_THRESHOLD,
-    EXPIRY_DAYS,MAX_DOWNLOAD_WORKERS, DATA_DIR
+    EXPIRY_DAYS,MAX_DOWNLOAD_WORKERS, DATA_DIR, ACCESS_TOKEN, PAGE_ID
 )
 from app.services.apollo_scrape.apollo import Apollo
 from app.services.apollo_scrape.link_processor import LinkProcessor
@@ -1306,8 +1306,8 @@ class ApolloOrchestrator:
         task_id: str,
         keywords: List[str],
         days: int,
-        access_token: str,
-        page_id: str
+        # access_token: str,
+        # page_id: str
     ) -> Dict[str, Any]:
 
         await self._start_realtime_publishing(task_id, interval=2.0)
@@ -1330,10 +1330,10 @@ class ApolloOrchestrator:
             timestamp = time.strftime("%Y%m%d-%H%M%S")
             facebook_output_dir = os.path.join(self.base_directory, "facebook", f"facebook_{timestamp}")
 
-            self.publish_log(task_id, "Initializing Facebook scrapping service", "info")
+            self.publish_log(task_id, f"Initializing Facebook scrapping service {ACCESS_TOKEN} and {PAGE_ID}", "info")
             facebook_scrapper = FacebookScrapingService(
-                access_token=access_token,
-                page_id=page_id,
+                access_token=ACCESS_TOKEN,
+                page_id=PAGE_ID,
                 output_dir=facebook_output_dir,
                 progress_update_interval=5
             )

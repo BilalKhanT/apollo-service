@@ -4,6 +4,7 @@ from datetime import datetime, time
 from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
+import os
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -17,7 +18,16 @@ from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSc
 from app.models.database.fb_scrape.fb_schedule_model import FacebookScrapeSchedule, ScheduleStatus as FacebookScheduleStatus
 from app.utils.task_manager import task_manager
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.info("Environment variables loaded from .env file")
+except ImportError:
+    logging.warning("python-dotenv not installed, using system environment variables")
+
 logger = logging.getLogger(__name__)
+ACCESS_TOKEN: str = os.getenv("ACCESS_TOKEN", "")
+PAGE_ID: str = os.getenv("PAGE_ID", "")
 
 
 class ScheduleType(str, Enum):
@@ -28,7 +38,6 @@ class ScheduleType(str, Enum):
 
 @dataclass
 class ScheduleJobData:
-    """Data structure to hold schedule job information"""
     schedule_id: str
     schedule_type: ScheduleType
     schedule_name: Optional[str]
@@ -246,8 +255,8 @@ class SchedulerService:
                 parameters={
                     'keywords': schedule.keywords,
                     'days': schedule.days,
-                    'access_token': "EAANwmjYfSZAMBO9my96Ipmky8pZCHEkDOu5eXZAaHc7ge2LZCZCsZBz7yoj7O5mfZCHlTLVey0RbZBIUgQTpkqH7goqwQLTw0kWAw4GMaiOh36qIh3jYDX6KYfOqMBVjZBChSlCLNmljS4dswIB9sZCNvQZCXZC3xlMJ9FLDLUyT0dzd9XQBG5nHv4FPSW5hkr8Kt9eO",
-                    'page_id': "185182871519466"
+                    'access_token': ACCESS_TOKEN,
+                    'page_id': PAGE_ID
                 }
             )
             

@@ -1,5 +1,13 @@
+import logging
 import os
-from typing import List, Optional
+from typing import List
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.info("Environment variables loaded from .env file")
+except ImportError:
+    logging.warning("python-dotenv not installed, using system environment variables")
 
 # Crawler settings
 CRAWLER_USER_AGENT: str = os.getenv(
@@ -13,12 +21,15 @@ CRAWLER_INACTIVITY_TIMEOUT: int = int(os.getenv("CRAWLER_INACTIVITY_TIMEOUT", "1
 CRAWLER_SAVE_INTERVAL: int = int(os.getenv("CRAWLER_SAVE_INTERVAL", "20"))
 CRAWLER_RESPECT_ROBOTS_TXT: bool = os.getenv("CRAWLER_RESPECT_ROBOTS_TXT", "True").lower() == "true"
 
+# Facebook Scrapper
+ACCESS_TOKEN: str = os.getenv("ACCESS_TOKEN", "")
+PAGE_ID: str = os.getenv("PAGE_ID", "")
 # URL patterns to ignore
 DEFAULT_URL_PATTERNS_TO_IGNORE: List[str] = [
     r'logout', r'login', r'signin', r'signout',
     r'\.(zip|rar|exe|dmg|jpeg|png|gif|mov|jpg|mp3|m4v|avi|mp4|aspx)$',
-    r'\.jpg',  # Match .jpg files
-    r'/404$',  # Ignore URLs ending with /404
+    r'\.jpg',  
+    r'/404$',  
 ]
 
 # Link processor settings
@@ -35,7 +46,6 @@ SOCIAL_MEDIA_KEYWORDS: List[str] = [
 ]
 
 # Keywords to categorize as bank-related links
-# In production, these should be customized based on the target bank
 #fbl
 BANK_KEYWORDS: List[str] = ['fbl', 'faysal']
 

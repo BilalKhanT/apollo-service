@@ -18,13 +18,13 @@ class Database:
     client: Optional[AsyncIOMotorClient] = None
     database = None
 
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb+srv://bilalkhan:Nl8k9ZlwybiTi9nx@apollostagedb.iwunbq7.mongodb.net/?retryWrites=true&w=majority&appName=ApolloStageDB")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "apollo_crawler")
-MONGODB_MIN_POOL_SIZE = int(os.getenv("MONGODB_MIN_POOL_SIZE", "5"))
-MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "50"))
-MONGODB_MAX_IDLE_TIME = int(os.getenv("MONGODB_MAX_IDLE_TIME", "30000"))
-MONGODB_CONNECT_TIMEOUT = int(os.getenv("MONGODB_CONNECT_TIMEOUT", "20000"))
-MONGODB_SERVER_SELECTION_TIMEOUT = int(os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT", "10000"))
+MONGODB_URL = os.getenv("MONGODB_URL", "")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "")
+MONGODB_MIN_POOL_SIZE = int(os.getenv("MONGODB_MIN_POOL_SIZE", ""))
+MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", ""))
+MONGODB_MAX_IDLE_TIME = int(os.getenv("MONGODB_MAX_IDLE_TIME", ""))
+MONGODB_CONNECT_TIMEOUT = int(os.getenv("MONGODB_CONNECT_TIMEOUT", ""))
+MONGODB_SERVER_SELECTION_TIMEOUT = int(os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT", ""))
 
 logger = logging.getLogger(__name__)
 logger.info(f"MongoDB URL loaded: {MONGODB_URL[:50]}... (showing first 50 chars)")

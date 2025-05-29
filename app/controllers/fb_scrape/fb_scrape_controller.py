@@ -16,8 +16,8 @@ class FacebookScrapeController:
     async def start_facebook_scraping(
         keywords: List[str], 
         days: int,
-        access_token: str,
-        page_id: str
+        # access_token: str,
+        # page_id: str
     ) -> Dict[str, Any]:
 
         try:
@@ -26,8 +26,8 @@ class FacebookScrapeController:
                 params={
                     "keywords": keywords,
                     "days": days,
-                    "access_token": access_token, 
-                    "page_id": page_id
+                    # "access_token": access_token, 
+                    # "page_id": page_id
                 }
             )
             
