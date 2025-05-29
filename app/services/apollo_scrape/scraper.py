@@ -212,12 +212,27 @@ class ClusterScraper:
         try:
             soup = BeautifulSoup(html, 'html.parser')
 
-            for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
-                class_=['mobile-login-field-small-wrapper','sub-page-links-wrapper','header-main-subpages',
-                       'related-links-wrapper','content-wrapper','mobile-header-main', 'mm-header-nav-links',
-                       'top-bar','login-field-small-wrapper-subpages','form-small-wrapper','side-nav-inner-page',
-                       'footer-wrapper','mobile-copyrights-wrapper','privacy-links-wrapper','bread-crums-wrapper',
-                       'dcp-form']):
+            # # # UBL
+            # for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
+            # class_=['mobile-login-field-small-wrapper','sub-page-links-wrapper','header-main-subpages','related-links-wrapper','content-wrapper','mobile-header-main', 'mm-header-nav-links','top-bar','login-field-small-wrapper-subpages','form-small-wrapper','side-nav-inner-page','footer-wrapper','mobile-copyrights-wrapper','privacy-links-wrapper','bread-crums-wrapper','dcp-form']):
+            #     tag.decompose()
+
+
+
+            # # FBL
+            for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div', 'button','a','section'],
+            class_=['top-header','desk-header','mobile-header','breadcrumbs-bx','top-footer','middle-footer fb-footer','lowerfooter','nav-link','standard-btn mt-3','tab-sec-1 alpha importent-sec']):
+                tag.decompose()
+
+            # #BAFL
+            # for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
+            # class_=['col-lg-2 col-md-2 col-xs-2 col-sm-2 no-padding headerDiv','morph-menu-wrapper','phNumber',
+            #         'show-on-hover topBarMenu portal-button','menu-premier-quick-links-container','mobile-nav','quickContact paddingSidemenuDefault',
+            #         'pum-container popmake theme-2087406 pum-responsive pum-responsive-small responsive size-small',
+            #         'pum-container popmake theme-2087405 pum-responsive pum-responsive-medium responsive size-medium',
+            #         'pum-content popmake-content',' col-sm-10 no-padding classForRes','fontEm13 normalFont marginTop0',
+            #         'col-sm-10 no-padding','countrySelect clearfix','col-sm-2 no-padding',' col-sm-10 no-padding classForRes'
+            # ]):
                 tag.decompose()
 
             for img in soup.find_all('img'):
