@@ -610,6 +610,8 @@ class ApolloOrchestrator:
                     progress=5.0
                 )
 
+                await CrawlResultController.mark_as_scraped(crawl_task_id)
+
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
                 scrape_output_dir = os.path.join(self.scrape_dir, f"scrape_{timestamp}")
                 metadata_output_dir = os.path.join(self.metadata_dir, f"metadata_{timestamp}")
