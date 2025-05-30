@@ -16,7 +16,8 @@ class SocketManager:
         )
         self.connected_clients: Dict[str, Dict[str, Any]] = {}
         self.task_subscribers: Dict[str, Set[str]] = {}  
-        self.client_tasks: Dict[str, Set[str]] = {}  
+        self.client_tasks: Dict[str, Set[str]] = {}
+        self.schedule_alert_subscribers: Set[str] = set()  
         self._setup_event_handlers()
         
     def _setup_event_handlers(self):
@@ -41,6 +42,14 @@ class SocketManager:
         @self.sio.event
         async def get_task_status(sid, data):
             await self._handle_get_task_status(sid, data)
+
+        @self.sio.event
+        async def subscribe_schedule_alerts(sid, data):
+            await self._handle_subscribe_schedule_alerts(sid, data)
+            
+        @self.sio.event
+        async def unsubscribe_schedule_alerts(sid, data):
+            await self._handle_unsubscribe_schedule_alerts(sid, data)
             
         @self.sio.event
         async def ping(sid):
@@ -70,6 +79,8 @@ class SocketManager:
                 for task_id in subscribed_tasks:
                     self._unsubscribe_from_task(sid, task_id)
                 del self.client_tasks[sid]
+
+            self.schedule_alert_subscribers.discard(sid)
             
             logger.info(f"Client {sid} disconnected after {datetime.utcnow() - self.connected_clients[sid]['connected_at']}")
             del self.connected_clients[sid]
@@ -339,5 +350,65 @@ class SocketManager:
     
     def get_task_subscribers(self, task_id: str) -> List[str]:
         return list(self.task_subscribers.get(task_id, set()))
+    
+    async def _handle_subscribe_schedule_alerts(self, sid: str, data: Dict[str, Any]):
+        try:
+            self.schedule_alert_subscribers.add(sid)
+            
+            if sid in self.connected_clients:
+                self.connected_clients[sid]['last_seen'] = datetime.utcnow()
+            
+            await self.sio.emit('schedule_alerts_subscription_confirmed', {
+                'message': 'Successfully subscribed to schedule alerts',
+                'subscriber_count': len(self.schedule_alert_subscribers)
+            }, room=sid)
+            
+            logger.info(f"Client {sid} subscribed to schedule alerts")
+            
+        except Exception as e:
+            logger.error(f"Error handling subscribe_schedule_alerts for client {sid}: {str(e)}")
+            await self.sio.emit('error', {
+                'event': 'subscribe_schedule_alerts',
+                'message': f'Subscription failed: {str(e)}',
+                'code': 'SCHEDULE_ALERTS_SUBSCRIPTION_ERROR'
+            }, room=sid)
+
+    async def _handle_unsubscribe_schedule_alerts(self, sid: str, data: Dict[str, Any]):
+        try:
+            self.schedule_alert_subscribers.discard(sid)
+            
+            await self.sio.emit('schedule_alerts_unsubscription_confirmed', {
+                'message': 'Successfully unsubscribed from schedule alerts',
+                'subscriber_count': len(self.schedule_alert_subscribers)
+            }, room=sid)
+            
+            logger.info(f"Client {sid} unsubscribed from schedule alerts")
+            
+        except Exception as e:
+            logger.error(f"Error handling unsubscribe_schedule_alerts for client {sid}: {str(e)}")
+            await self.sio.emit('error', {
+                'event': 'unsubscribe_schedule_alerts',
+                'message': f'Unsubscription failed: {str(e)}',
+                'code': 'SCHEDULE_ALERTS_UNSUBSCRIPTION_ERROR'
+            }, room=sid)
+
+    async def emit_schedule_alert(self, alert_data: Dict[str, Any]):
+        if self.schedule_alert_subscribers:
+            active_subscribers = [sid for sid in self.schedule_alert_subscribers if sid in self.connected_clients]
+            
+            if active_subscribers:
+                try:
+                    await self.sio.emit(
+                        'schedule_alert',
+                        {
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'alert_type': alert_data.get('type', 'execution'),
+                            'data': alert_data
+                        },
+                        room=active_subscribers
+                    )
+                    logger.info(f"Emitted schedule alert to {len(active_subscribers)} clients: {alert_data.get('message', 'Unknown alert')}")
+                except Exception as e:
+                    logger.error(f"Error emitting schedule alert: {str(e)}")
 
 socket_manager = SocketManager()

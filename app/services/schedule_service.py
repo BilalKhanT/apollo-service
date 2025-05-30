@@ -85,6 +85,27 @@ class SchedulerService:
         )
         
         logger.info("SchedulerService initialized")
+
+    async def _emit_schedule_alert(self, alert_type: str, schedule_data: Dict[str, Any]):
+        try:
+            from app.utils.socket_manager import socket_manager
+            await socket_manager.emit_schedule_alert(alert_data={
+                'type': alert_type,
+                'schedule_type': schedule_data.get('schedule_type'),
+                'schedule_name': schedule_data.get('schedule_name'),
+                'schedule_id': schedule_data.get('schedule_id'),
+                'task_id': schedule_data.get('task_id'),
+                'message': schedule_data.get('message'),
+                'execution_time': schedule_data.get('execution_time'),
+                'parameters': schedule_data.get('parameters', {}),
+                'success': schedule_data.get('success'),
+                'error': schedule_data.get('error')
+            })
+            logger.info("Socket schedule alert sent successfully")
+        except ImportError:
+            logger.debug("Socket manager not available for schedule alerts")
+        except Exception as e:
+            logger.error(f"Error emitting schedule alert: {str(e)}")
     
     async def start(self):
         if self.running:
@@ -327,6 +348,21 @@ class SchedulerService:
 
             schedule.mark_run_started(task_id)
             await schedule.save()
+
+            await self._emit_schedule_alert('started', {
+                'schedule_type': 'crawl',
+                'schedule_name': schedule.schedule_name or f"Crawl: {schedule.base_url}",
+                'schedule_id': schedule_id,
+                'task_id': task_id,
+                'message': f"Started scheduled crawl for {schedule.base_url}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'parameters': {
+                    'base_url': schedule.base_url,
+                    'max_links_to_scrape': schedule.max_links_to_scrape,
+                    'max_pages_to_scrape': schedule.max_pages_to_scrape,
+                    'depth_limit': schedule.depth_limit
+                }
+            })
             
             logger.info(f"Started scheduled crawl task {task_id} for {schedule.base_url}")
 
@@ -339,6 +375,16 @@ class SchedulerService:
                 if schedule:
                     schedule.mark_run_completed(success=False, error=str(e))
                     await schedule.save()
+
+                    await self._emit_schedule_alert('failed', {
+                        'schedule_type': 'crawl',
+                        'schedule_name': schedule.schedule_name or f"Crawl: {schedule.base_url}",
+                        'schedule_id': schedule_id,
+                        'task_id': None,
+                        'message': f"Failed to start scheduled crawl for {schedule.base_url}: {str(e)}",
+                        'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                        'error': str(e)
+                    })
             except:
                 pass
             raise
@@ -362,6 +408,18 @@ class SchedulerService:
 
             schedule.mark_run_started(task_id)
             await schedule.save()
+
+            await self._emit_schedule_alert('started', {
+                'schedule_type': 'deal_scrape',
+                'schedule_name': schedule.schedule_name or f"Deal Scrape: {', '.join(schedule.cities)}",
+                'schedule_id': schedule_id,
+                'task_id': task_id,
+                'message': f"Started scheduled deal scraping for cities: {', '.join(schedule.cities)}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'parameters': {
+                    'cities': schedule.cities
+                }
+            })
             
             logger.info(f"Started scheduled deal scrape task {task_id} for cities: {', '.join(schedule.cities)}")
 
@@ -374,6 +432,16 @@ class SchedulerService:
                 if schedule:
                     schedule.mark_run_completed(success=False, error=str(e))
                     await schedule.save()
+
+                    await self._emit_schedule_alert('failed', {
+                        'schedule_type': 'deal_scrape',
+                        'schedule_name': schedule.schedule_name or f"Deal Scrape: {', '.join(schedule.cities)}",
+                        'schedule_id': schedule_id,
+                        'task_id': None,
+                        'message': f"Failed to start scheduled deal scraping for cities {', '.join(schedule.cities)}: {str(e)}",
+                        'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                        'error': str(e)
+                    })
             except:
                 pass
             raise
@@ -407,6 +475,19 @@ class SchedulerService:
             
             schedule.mark_run_started(task_id)
             await schedule.save()
+
+            await self._emit_schedule_alert('started', {
+                'schedule_type': 'facebook_scrape',
+                'schedule_name': schedule.schedule_name or f"Facebook Scrape: {schedule.get_keywords_display()}",
+                'schedule_id': schedule_id,
+                'task_id': task_id,
+                'message': f"Started scheduled Facebook scraping for keywords: {schedule.get_keywords_display()}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'parameters': {
+                    'keywords': schedule.keywords,
+                    'days': schedule.days
+                }
+            })
             
             logger.info(f"Started scheduled Facebook scrape task {task_id} for keywords: {schedule.get_keywords_display()}")
             
@@ -419,6 +500,16 @@ class SchedulerService:
                 if schedule:
                     schedule.mark_run_completed(success=False, error=str(e))
                     await schedule.save()
+
+                    await self._emit_schedule_alert('failed', {
+                        'schedule_type': 'facebook_scrape',
+                        'schedule_name': schedule.schedule_name or f"Facebook Scrape: {schedule.get_keywords_display()}",
+                        'schedule_id': schedule_id,
+                        'task_id': None,
+                        'message': f"Failed to start scheduled Facebook scraping for keywords {schedule.get_keywords_display()}: {str(e)}",
+                        'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                        'error': str(e)
+                    })
             except:
                 pass
             raise
@@ -444,6 +535,17 @@ class SchedulerService:
             
             schedule.mark_run_completed(success=success, error=error_msg)
             await schedule.save()
+
+            await self._emit_schedule_alert('completed' if success else 'failed', {
+                'schedule_type': 'crawl',
+                'schedule_name': schedule.schedule_name or f"Crawl: {schedule.base_url}",
+                'schedule_id': str(schedule.id),
+                'task_id': task_id,
+                'message': f"Scheduled crawl {'completed successfully' if success else 'failed'} for {schedule.base_url}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'success': success,
+                'error': error_msg
+            })
             
             if success:
                 logger.info(f"Scheduled crawl completed successfully for {schedule.base_url} (task: {task_id})")
@@ -456,6 +558,17 @@ class SchedulerService:
             
             schedule.mark_run_completed(success=False, error=error_msg)
             await schedule.save()
+
+            await self._emit_schedule_alert('failed', {
+                'schedule_type': 'crawl',
+                'schedule_name': schedule.schedule_name or f"Crawl: {schedule.base_url}",
+                'schedule_id': str(schedule.id),
+                'task_id': task_id,
+                'message': f"Scheduled crawl encountered an error for {schedule.base_url}: {error_msg}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'success': False,
+                'error': error_msg
+            })
     
     async def _run_scheduled_deal_scrape(self, schedule: DealScrapeSchedule, task_id: str):
         try:
@@ -472,6 +585,17 @@ class SchedulerService:
             
             schedule.mark_run_completed(success=success, error=error_msg)
             await schedule.save()
+
+            await self._emit_schedule_alert('completed' if success else 'failed', {
+                'schedule_type': 'deal_scrape',
+                'schedule_name': schedule.schedule_name or f"Deal Scrape: {', '.join(schedule.cities)}",
+                'schedule_id': str(schedule.id),
+                'task_id': task_id,
+                'message': f"Scheduled deal scrape {'completed successfully' if success else 'failed'} for cities {', '.join(schedule.cities)}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'success': success,
+                'error': error_msg
+            })
             
             if success:
                 logger.info(f"Scheduled deal scrape completed successfully for cities {', '.join(schedule.cities)} (task: {task_id})")
@@ -484,6 +608,17 @@ class SchedulerService:
             
             schedule.mark_run_completed(success=False, error=error_msg)
             await schedule.save()
+
+            await self._emit_schedule_alert('failed', {
+                'schedule_type': 'deal_scrape',
+                'schedule_name': schedule.schedule_name or f"Deal Scrape: {', '.join(schedule.cities)}",
+                'schedule_id': str(schedule.id),
+                'task_id': task_id,
+                'message': f"Scheduled deal scrape encountered an error for cities {', '.join(schedule.cities)}: {error_msg}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'success': False,
+                'error': error_msg
+            })
     
     async def _run_scheduled_facebook_scrape(self, schedule: FacebookScrapeSchedule, task_id: str):
         try:
@@ -503,6 +638,17 @@ class SchedulerService:
             
             schedule.mark_run_completed(success=success, error=error_msg)
             await schedule.save()
+
+            await self._emit_schedule_alert('completed' if success else 'failed', {
+                'schedule_type': 'facebook_scrape',
+                'schedule_name': schedule.schedule_name or f"Facebook Scrape: {schedule.get_keywords_display()}",
+                'schedule_id': str(schedule.id),
+                'task_id': task_id,
+                'message': f"Scheduled Facebook scrape {'completed successfully' if success else 'failed'} for keywords {schedule.get_keywords_display()}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'success': success,
+                'error': error_msg
+            })
             
             if success:
                 logger.info(f"Scheduled Facebook scrape completed successfully for keywords {schedule.get_keywords_display()} (task: {task_id})")
@@ -515,6 +661,17 @@ class SchedulerService:
             
             schedule.mark_run_completed(success=False, error=error_msg)
             await schedule.save()
+
+            await self._emit_schedule_alert('failed', {
+                'schedule_type': 'facebook_scrape',
+                'schedule_name': schedule.schedule_name or f"Facebook Scrape: {schedule.get_keywords_display()}",
+                'schedule_id': str(schedule.id),
+                'task_id': task_id,
+                'message': f"Scheduled Facebook scrape encountered an error for keywords {schedule.get_keywords_display()}: {error_msg}",
+                'execution_time': datetime.now(self.karachi_tz).isoformat(),
+                'success': False,
+                'error': error_msg
+            })
     
     async def _is_url_being_crawled(self, base_url: str) -> bool:
         try:
