@@ -78,12 +78,19 @@ from app.models.fb_scrape.fb_scrape_schedule_model import (
     FBScheduleStatusResponse,
     FBScheduleActionResponse,
 )
+from app.models.apollo_scrape.user_pref_models import (
+    UserPreferenceRequest,
+    UserPreferenceResponse,
+    UserPreferenceDataResponse,
+)
+
 from .database.apollo_scraper.crawl_result_model import CrawlResult
 from .database.apollo_scraper.crawl_schedule_model import CrawlSchedule
 from .database.restaurant_deal.restaurant_result_model import DealResult
 from .database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
 from .database.fb_scrape.fb_result_model import FacebookResult
 from .database.fb_scrape.fb_schedule_model import FacebookScrapeSchedule
+from .database.apollo_scraper.user_pref_db_model import UserPreference
 
 __all__ = [
     # Base models
@@ -140,6 +147,7 @@ __all__ = [
     'DealScrapeSchedule',
     'FacebookResult',
     'FacebookScrapeSchedule',
+    'UserPreference',
 
     # Restaurant Deal models
     'DealScrapingRequest',
@@ -173,4 +181,9 @@ __all__ = [
     'FBScheduleListResponse',
     'FBScheduleStatusResponse',
     'FBScheduleActionResponse',
+
+    #User Preference
+    'UserPreferenceRequest',
+    'UserPreferenceResponse',
+    'UserPreferenceDataResponse',
 ]
