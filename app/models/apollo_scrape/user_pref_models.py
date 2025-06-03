@@ -17,7 +17,7 @@ class UserPreferenceRequest(BaseModel):
     )
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "userid": "user123",
                 "clusters": {
@@ -41,7 +41,7 @@ class UserPreferenceResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "userid": "user123",
                 "clusters": {
@@ -60,7 +60,7 @@ class UserPreferenceDataResponse(BaseResponse):
     data: UserPreferenceResponse = Field(description="User preference data")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "User preference retrieved successfully",

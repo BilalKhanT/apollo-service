@@ -78,7 +78,7 @@ class FBScheduleRequest(BaseModel):
 
     class Config:
         use_enum_values = True
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "keywords": ["offer", "discount", "deal"],
                 "days": 30,
@@ -111,7 +111,7 @@ class FBScheduleResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "fb789e0123-e89b-12d3-a456-426614174000",
                 "keywords": ["offer", "discount", "deal"],
@@ -201,7 +201,7 @@ class FBScheduleUpdateRequest(BaseModel):
     
     class Config:
         use_enum_values = True
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "keywords": ["offer", "discount", "deal", "promotion"],
                 "days": 45,
@@ -217,7 +217,7 @@ class FBScheduleListResponse(BaseResponse):
     total_count: int = Field(description="Total number of schedules", example=5)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Facebook schedules retrieved successfully",
@@ -258,7 +258,7 @@ class FBScheduleStatusResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "fb789e0123-e89b-12d3-a456-426614174000",
                 "status": "active",
@@ -285,7 +285,7 @@ class FBScheduleActionResponse(BaseResponse):
     )
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Facebook schedule paused successfully",

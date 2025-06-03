@@ -92,7 +92,7 @@ class ScrapingProgress(BaseModel):
     files_processed: int = Field(default=0, description="Total files processed", example=123)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "current_cluster": "1.1",
                 "current_url": "https://example.com/page1",
@@ -114,7 +114,7 @@ class ScrapingSummary(BaseModel):
     execution_time_seconds: float = Field(description="Total execution time", example=320.5)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "clusters_scraped": 3,
                 "pages_scraped": 145,
@@ -150,7 +150,7 @@ class ScrapingStatus(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "456e7890-e89b-12d3-a456-426614174000",
                 "status": "scraping",
@@ -174,7 +174,7 @@ class ScrapingResponse(DataResponse):
     data: ScrapingStatus = Field(description="Scraping task status information")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Scraping task started successfully",
