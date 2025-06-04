@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Set, Tuple
 
 class URLClusterer:
     def __init__(
@@ -41,6 +41,27 @@ class URLClusterer:
         logger.addHandler(handler)
         
         return logger
+    
+    def normalize_cluster_name(self, cluster_name):
+        if not cluster_name:
+            return ""
+
+        normalized = re.sub(r'[-\s]+', ' ', cluster_name.lower())
+        return normalized
+
+    def normalize_path_display(self, path):
+        if not path or path == '/':
+            return '/'
+
+        parts = path.split('/')
+        normalized_parts = []
+
+        for part in parts:
+            if part:  
+                normalized_part = re.sub(r'-+', ' ', part)
+                normalized_parts.append(normalized_part)
+
+        return '/' + '/'.join(normalized_parts) if normalized_parts else '/'
     
     def load_links(self) -> List[str]:
         try:
@@ -236,6 +257,62 @@ class URLClusterer:
         
         return domain_path_clusters
     
+    def merge_normalized_clusters(self, formatted_clusters):
+        merged_clusters = {}
+
+        for domain, domain_data in formatted_clusters.items():
+            normalized_map = {}
+
+            for cluster in domain_data['clusters']:
+                cluster_name = f"{domain}{cluster['path']}"
+                normalized_name = self.normalize_cluster_name(cluster_name)
+
+                if normalized_name in normalized_map:
+                    existing_cluster = normalized_map[normalized_name]
+                    existing_cluster['urls'].extend(cluster['urls'])
+                    existing_cluster['original_paths'].append(cluster['path'])
+                    self.logger.info(f"Merged cluster '{cluster['path']}' into existing normalized cluster '{normalized_name}'")
+                else:
+                    normalized_map[normalized_name] = {
+                        'id': cluster['id'],
+                        'path': cluster['path'],
+                        'urls': cluster['urls'].copy(),
+                        'original_paths': [cluster['path']]
+                    }
+
+            merged_domain_clusters = []
+            for normalized_name, cluster_data in normalized_map.items():
+                unique_urls = []
+                seen_urls = set()
+
+                for url in cluster_data['urls']:
+                    if url not in seen_urls:
+                        unique_urls.append(url)
+                        seen_urls.add(url)
+
+                duplicates_removed = len(cluster_data['urls']) - len(unique_urls)
+                if duplicates_removed > 0:
+                    self.logger.info(f"Removed {duplicates_removed} duplicate URLs from cluster '{cluster_data['path']}'")
+
+                merged_cluster = {
+                    'id': cluster_data['id'],
+                    'path': self.normalize_path_display(cluster_data['path']),
+                    'normalized_name': normalized_name,
+                    'url_count': len(unique_urls),
+                    'urls': sorted(unique_urls),
+                    'original_paths': cluster_data['original_paths']
+                }
+
+                merged_domain_clusters.append(merged_cluster)
+
+            merged_clusters[domain] = {
+                'id': domain_data['id'],
+                'count': sum(cluster['url_count'] for cluster in merged_domain_clusters),
+                'clusters': merged_domain_clusters
+            }
+
+        return merged_clusters
+    
     def prepare_clusters_for_output(
         self, 
         domain_path_clusters: Dict[str, Dict[str, List[Dict[str, Any]]]]
@@ -326,17 +403,16 @@ class URLClusterer:
 
         self.logger.info("Formatting clusters for output")
         formatted_clusters = self.prepare_clusters_for_output(domain_path_clusters)
+
+        self.logger.info("Merging clusters with normalized names and removing duplicates...")
+        merged_clusters = self.merge_normalized_clusters(formatted_clusters)
         self.progress = 90.0
 
-        summary = {
-            'total_domains': len(formatted_clusters),
-            'total_clusters': sum(len(domain['clusters']) for domain in formatted_clusters.values()),
-            'total_urls': len(bank_links)
-        }
+        summary = self.generate_cluster_summary(merged_clusters)
 
         result = {
             'summary': summary,
-            'clusters': formatted_clusters
+            'clusters': merged_clusters
         }
 
         os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
