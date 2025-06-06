@@ -5,6 +5,8 @@ import re
 import threading
 import logging
 import traceback
+import hashlib
+import uuid
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Callable
@@ -19,7 +21,8 @@ class FacebookScrapingService:
         output_dir: str = "facebook_data",
         max_workers: int = 20,
         progress_update_interval: int = 5,
-        batch_size: int = 50
+        batch_size: int = 50,
+        metadata_dir: str = "facebook_post_metadata"
     ):
         self.logger = self._setup_logger()
 
@@ -29,6 +32,7 @@ class FacebookScrapingService:
         self.max_workers = max_workers
         self.progress_update_interval = progress_update_interval
         self.batch_size = batch_size
+        self.metadata_dir = metadata_dir
         self.base_url = "https://graph.facebook.com"
         self.api_version = "v18.0"
         self.status = "initialized"
@@ -53,7 +57,8 @@ class FacebookScrapingService:
         self.task_manager = None
         self.progress_callback = None
         
-        self.logger.info(f"FacebookScrapingService initialized with output_dir={output_dir}, max_workers={max_workers}, batch_size={batch_size}")
+        os.makedirs(self.metadata_dir, exist_ok=True)
+        self.logger.info(f"FacebookScrapingService initialized with output_dir={output_dir}, max_workers={max_workers}, batch_size={batch_size}, metadata_dir={metadata_dir}")
 
     def _setup_logger(self):
         logger = logging.getLogger("FacebookScrapingService")
@@ -329,6 +334,60 @@ class FacebookScrapingService:
             self.logger.debug("No expiry date found in text")
             return None
 
+    def generate_content_checksum(self, content: str) -> str:
+        """Generate a SHA-256 checksum for the post content"""
+        try:
+            hash_sha256 = hashlib.sha256()
+            hash_sha256.update(content.encode('utf-8'))
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            self.logger.error(f"Error generating checksum: {e}")
+            return "checksum_error"
+
+    def determine_source_from_post(self, post_data: Dict[str, Any]) -> str:
+        """Determine the source type for Facebook posts"""
+        return 'facebook'
+
+    def create_metadata_file(self, filename_base: str, post_data: Dict[str, Any],
+                           category: str, expiry_date: Optional[str] = None,
+                           file_path: Optional[str] = None) -> str:
+        """Create a metadata file with Facebook post information"""
+        try:
+            # Extract post information
+            post_id = post_data.get('id', 'unknown')
+            message = post_data.get('message', '')
+
+            # Generate unique document ID
+            document_id = str(uuid.uuid4())
+
+            # Generate checksum of post content
+            checksum = self.generate_content_checksum(message)
+
+            # Determine source (always facebook for FB posts)
+            source = self.determine_source_from_post(post_data)
+
+            # Create Facebook post URL (if we have post ID)
+            facebook_url = f"https://www.facebook.com/{post_id}" if post_id != 'unknown' else 'unknown'
+
+            # Build metadata content
+            metadata_content = f"document id: {document_id}\n"
+            metadata_content += f"document name: Facebook Post - {category}\n"
+            metadata_content += f"document url: {facebook_url}\n"
+            metadata_content += f"expiry: {expiry_date if expiry_date else 'none'}\n"
+            metadata_content += f"source: {source}\n"
+            metadata_content += f"checksum: {checksum}\n"
+
+            # Save metadata file
+            metadata_file_path = os.path.join(self.metadata_dir, f"{filename_base}.meta")
+            with open(metadata_file_path, "w", encoding="utf-8") as f:
+                f.write(metadata_content)
+
+            self.logger.info(f"Metadata saved to: {metadata_file_path}")
+            return metadata_file_path
+        except Exception as e:
+            self.logger.error(f"Error creating metadata file: {str(e)}")
+            return ""
+
     def process_post_batch(self, batch_id: int, posts_batch: List[Dict[str, Any]], 
                           keywords: List[str], keyword_folders: Dict[str, str], 
                           final_output_dir: str) -> Dict[str, Any]:
@@ -401,7 +460,8 @@ class FacebookScrapingService:
                             else:
                                 filename_date = "none"
                             
-                            file_path = os.path.join(folder, f"fb_post_{folder_name}_{offer_category}_{filename_date}.md")
+                            filename_base = f"fb_post_{folder_name}_{offer_category}_{filename_date}"
+                            file_path = os.path.join(folder, f"{filename_base}.md")
 
                             os.makedirs(folder, exist_ok=True)
                             
@@ -422,6 +482,16 @@ class FacebookScrapingService:
                                         if "media" in attachment and "image" in attachment["media"]:
                                             image_url = attachment["media"]["image"].get("src", "")
                                             f.write(f"![Image]({image_url})\n\n")
+
+                            # Generate metadata file for this post
+                            self.create_metadata_file(
+                                filename_base=filename_base,
+                                post_data=post,
+                                category=offer_category,
+                                expiry_date=expiry_date,
+                                file_path=file_path
+                            )
+
                         except Exception as file_error:
                             self.logger.warning(f"Error saving post to file {file_path}: {str(file_error)}")
                     
@@ -747,7 +817,8 @@ class FacebookScrapingService:
                 f.write(f"**Posts Collected for Database:** {len(self.processed_posts_data)}\n")
                 f.write(f"**Processing Method:** Parallel processing with {self.max_workers} workers\n")
                 f.write(f"**Batches Processed:** {self.current_batch}/{self.total_batches}\n")
-                f.write(f"**Execution Time:** {time.time() - self.start_time:.2f} seconds\n\n")
+                f.write(f"**Execution Time:** {time.time() - self.start_time:.2f} seconds\n")
+                f.write(f"**Metadata Directory:** {self.metadata_dir}\n\n")
                 
                 if keywords:
                     f.write("## Keyword Folder Assignment\n\n")

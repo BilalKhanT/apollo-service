@@ -7,6 +7,9 @@ from urllib.parse import urlparse
 import logging
 import time
 import threading
+import hashlib
+import uuid
+from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable
 
 class FileDownloader:
@@ -18,7 +21,9 @@ class FileDownloader:
         chunk_size: int = 8192,
         progress_update_interval: int = 5,
         retry_count: int = 3,
-        batch_size: int = 50  
+        batch_size: int = 50,
+        metadata_dir: str = "document_metadata",
+        expiry_days: Optional[int] = None
     ):
 
         self.logger = self._setup_logger()
@@ -28,6 +33,8 @@ class FileDownloader:
         self.progress_update_interval = progress_update_interval
         self.retry_count = retry_count
         self.batch_size = batch_size
+        self.metadata_dir = metadata_dir
+        self.expiry_days = expiry_days
         self.status = "initialized"
         self.progress = 0.0
         self.start_time = 0.0
@@ -57,7 +64,8 @@ class FileDownloader:
         }
         self.results_lock = threading.Lock()
         
-        self.logger.info(f"FileDownloader initialized with {max_workers} workers, {timeout}s timeout, batch_size={batch_size}")
+        os.makedirs(self.metadata_dir, exist_ok=True)
+        self.logger.info(f"FileDownloader initialized with {max_workers} workers, {timeout}s timeout, batch_size={batch_size}, metadata_dir={metadata_dir}")
     
     def _setup_logger(self):
         logger = logging.getLogger("FileDownloader")
@@ -188,6 +196,55 @@ class FileDownloader:
         with lock:
             os.makedirs(folder, exist_ok=True)
     
+    def determine_source_from_url(self, url: str) -> str:
+        """Determine the source type based on the URL"""
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.lower()
+
+        if 'facebook.com' in domain or 'fb.com' in domain:
+            return 'facebook'
+        else:
+            return 'website'
+
+    def generate_checksum(self, file_path: str) -> str:
+        """Generate a SHA-256 checksum for the downloaded file"""
+        hash_sha256 = hashlib.sha256()
+        try:
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_sha256.update(chunk)
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            self.logger.error(f"Error generating checksum for {file_path}: {e}")
+            return "checksum_error"
+
+    def create_metadata_file(self, filename_base: str, document_name: str, url: str, 
+                           file_path: str, expiry: Optional[str] = None) -> str:
+        """Create a metadata file with document information"""
+        try:
+            os.makedirs(self.metadata_dir, exist_ok=True)
+
+            source = self.determine_source_from_url(url)
+            checksum = self.generate_checksum(file_path)
+            document_id = str(uuid.uuid4())
+
+            metadata_content = f"document id: {document_id}\n"
+            metadata_content += f"document name: {document_name}\n"
+            metadata_content += f"document url: {url}\n"
+            metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
+            metadata_content += f"source: {source}\n"
+            metadata_content += f"checksum: {checksum}\n"
+
+            metadata_file_path = os.path.join(self.metadata_dir, f"{filename_base}.meta")
+            with open(metadata_file_path, "w", encoding="utf-8") as f:
+                f.write(metadata_content)
+
+            self.logger.info(f"Metadata saved to: {metadata_file_path}")
+            return metadata_file_path
+        except Exception as e:
+            self.logger.error(f"Error creating metadata file: {str(e)}")
+            return ""
+
     def _download_file(self, url: str, folder: str, year: str = None, retry_attempts: int = 0) -> Dict[str, Any]:
         with self.counter_lock:
             self.current_file = url
@@ -319,6 +376,25 @@ class FileDownloader:
 
             if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                 self.logger.debug(f"Downloaded {url} to {file_path} ({file_size} bytes)")
+
+                # Calculate expiry date if expiry_days is provided
+                expiry_date = None
+                if self.expiry_days is not None:
+                    expiry_date = (datetime.now() + timedelta(days=self.expiry_days)).strftime('%Y-%m-%d')
+
+                # Generate metadata file
+                filename_base = os.path.splitext(filename)[0]
+                if not filename_base:
+                    filename_base = "unnamed_file"
+
+                self.create_metadata_file(
+                    filename_base=filename_base,
+                    document_name=filename,
+                    url=url,
+                    file_path=file_path,
+                    expiry=expiry_date
+                )
+
                 return {
                     "url": url,
                     "success": True,
@@ -438,7 +514,8 @@ class FileDownloader:
             "successful": 0,
             "failed": 0,
             "by_year": {},
-            "execution_time_seconds": 0
+            "execution_time_seconds": 0,
+            "metadata_directory": self.metadata_dir
         }
 
         self.session_pool = [self.create_new_session() for _ in range(self.max_workers * 2)]
@@ -447,7 +524,9 @@ class FileDownloader:
         
         try:
             os.makedirs(base_folder, exist_ok=True)
+            os.makedirs(self.metadata_dir, exist_ok=True)
             self.logger.info(f"Created base folder: {base_folder}")
+            self.logger.info(f"Created metadata directory: {self.metadata_dir}")
 
             with open(json_file, 'r', encoding='utf-8') as f:
                 try:

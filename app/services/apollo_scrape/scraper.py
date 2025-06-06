@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 import time
 import hashlib
+import uuid
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import logging
@@ -343,6 +344,7 @@ class ClusterScraper:
             return "", "", ""
     
     def determine_source_from_url(self, url: str) -> str:
+        """Determine the source type based on the URL"""
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
@@ -351,8 +353,15 @@ class ClusterScraper:
         else:
             return 'website'
     
-    def generate_document_id(self, content: str) -> str:
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    def generate_checksum(self, content: str) -> str:
+        """Generate a SHA-256 checksum for the content"""
+        try:
+            hash_sha256 = hashlib.sha256()
+            hash_sha256.update(content.encode('utf-8'))
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            self.logger.error(f"Error generating checksum: {e}")
+            return "checksum_error"
     
     def create_metadata_file(
         self, 
@@ -362,23 +371,44 @@ class ClusterScraper:
         url: str, 
         content: str, 
         expiry: Optional[str] = None
-    ) -> None:
-        os.makedirs(metadata_dir, exist_ok=True)
-        
-        source = self.determine_source_from_url(url)
-        document_id = self.generate_document_id(content)
-        
-        metadata_content = f"document name: {document_name}\n"
-        metadata_content += f"document url: {url}\n"
-        metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
-        metadata_content += f"source: {source}\n"
-        metadata_content += f"document_id: {document_id}\n"
-        
-        metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
-        with open(metadata_file_path, "w", encoding="utf-8") as f:
-            f.write(metadata_content)
-        
-        self.logger.debug(f"Metadata saved to: {metadata_file_path}")
+    ) -> str:
+        """
+        Create a metadata file with document information
+
+        Args:
+            metadata_dir (str): Directory to save the metadata file
+            filename_base (str): Base filename (without extension)
+            document_name (str): Name/title of the document
+            url (str): URL of the document
+            content (str): Content of the document for generating checksum
+            expiry (str, optional): Expiry date if set
+
+        Returns:
+            str: Path to the created metadata file
+        """
+        try:
+            os.makedirs(metadata_dir, exist_ok=True)
+
+            source = self.determine_source_from_url(url)
+            checksum = self.generate_checksum(content)
+            document_id = str(uuid.uuid4())
+
+            metadata_content = f"document id: {document_id}\n"
+            metadata_content += f"document name: {document_name}\n"
+            metadata_content += f"document url: {url}\n"
+            metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
+            metadata_content += f"source: {source}\n"
+            metadata_content += f"checksum: {checksum}\n"
+
+            metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
+            with open(metadata_file_path, "w", encoding="utf-8") as f:
+                f.write(metadata_content)
+
+            self.logger.info(f"Metadata saved to: {metadata_file_path}")
+            return metadata_file_path
+        except Exception as e:
+            self.logger.error(f"Error creating metadata file: {str(e)}")
+            return ""
     
     def url_to_directory_path(self, url: str) -> str:
         parsed_url = url.split("://", 1)
