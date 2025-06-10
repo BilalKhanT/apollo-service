@@ -5,6 +5,8 @@ import os
 import threading
 import logging
 import traceback
+import hashlib
+import uuid
 from typing import Dict, List, Any, Optional, Callable
 
 class DealScrapperService:
@@ -24,7 +26,7 @@ class DealScrapperService:
         output_dir: str = "Deals and Discounts",
         max_workers: int = 20,
         request_delay: float = 0.5,
-        progress_update_interval: int = 5
+        progress_update_interval: int = 5,
     ):
 
         self.logger = self._setup_logger()
@@ -56,7 +58,7 @@ class DealScrapperService:
         self.progress_callback = None
         self._create_directory_structure()
         
-        self.logger.info(f"DealScrapperService initialized with output_dir={output_dir}, max_workers={max_workers}")
+        self.logger.info(f"DealScrapperService initialized with output_dir={output_dir}, max_workers={max_workers}, metadata_dir=metadata")
     
     def _create_directory_structure(self):
         try:
@@ -65,7 +67,8 @@ class DealScrapperService:
             subdirs = [
                 "markdown_files",
                 "json_data", 
-                "city_summaries"
+                "city_summaries",
+                "metadata",
             ]
             
             for subdir in subdirs:
@@ -337,48 +340,122 @@ class DealScrapperService:
             self.logger.warning(f"    Exception: {restaurant_name} - {str(e)}")
             return []
     
+    def generate_content_checksum(self, content: str) -> str:
+        try:
+            hash_sha256 = hashlib.sha256()
+            hash_sha256.update(content.encode('utf-8'))
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            self.logger.error(f"Error generating checksum: {e}")
+            return "checksum_error"
+
+    def extract_expiry_from_deals(self, deals_data: list) -> Optional[str]:
+        expiry_dates = []
+
+        for deal in deals_data:
+            end_date = deal.get('endDate')
+            if end_date:
+                try:
+                    if isinstance(end_date, str):
+                        date_str = end_date.split('T')[0]  
+                        expiry_dates.append(date_str)
+                except Exception as e:
+                    self.logger.debug(f"Error parsing date {end_date}: {e}")
+                    continue
+
+        if expiry_dates:
+            return min(expiry_dates)
+        else:
+            return None
+
+    def create_metadata_file(self, filename_base: str, city: str,
+                           deals_content: str, expiry_date: Optional[str] = None,
+                           file_path: Optional[str] = None) -> str:
+        try:
+            metadata_dir = os.path.join(self.output_dir, "metadata")
+            os.makedirs(metadata_dir, exist_ok=True)
+
+            document_id = str(uuid.uuid4())
+
+            checksum = self.generate_content_checksum(deals_content)
+
+            document_url = f"peekaboo://deals/{city}" if city else "peekaboo://deals/unknown"
+
+            metadata_content = f"document id: {document_id}\n"
+            metadata_content += f"document name: Peekaboo Deals - {city}\n"
+            metadata_content += f"document url: {document_url}\n"
+            metadata_content += f"expiry: {expiry_date if expiry_date else 'none'}\n"
+            metadata_content += f"source: peekaboo\n"
+            metadata_content += f"checksum: {checksum}\n"
+
+            metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
+            with open(metadata_file_path, "w", encoding="utf-8") as f:
+                f.write(metadata_content)
+
+            self.logger.info(f"Metadata saved to: {metadata_file_path}")
+            return metadata_file_path
+        except Exception as e:
+            self.logger.error(f"Error creating metadata file: {str(e)}")
+            return ""
+
     def write_city_markdown(self, city: str, restaurants_deals: Dict[str, List[Dict[str, Any]]]) -> None:
         markdown_dir = os.path.join(self.output_dir, "markdown_files")
         file_path = os.path.join(markdown_dir, f"{self.sanitize_filename(city)}_deals.md")
 
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(f"# Restaurant Deals in {city}\n\n")
-            f.write(f"*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')} (PKT)*\n\n")
+        markdown_content = f"# Restaurant Deals in {city}\n\n"
+        markdown_content += f"*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')} (PKT)*\n\n"
 
-            restaurants_with_deals = {k: v for k, v in restaurants_deals.items() if v}
-            
-            if not restaurants_with_deals:
-                f.write("No restaurant deals found for this city.\n")
-                return
-
+        restaurants_with_deals = {k: v for k, v in restaurants_deals.items() if v}
+        
+        if not restaurants_with_deals:
+            markdown_content += "No restaurant deals found for this city.\n"
+        else:
             total_restaurants = len(restaurants_with_deals)
             total_deals = sum(len(deals) for deals in restaurants_with_deals.values())
-            f.write(f"**Summary:** {total_deals} deals found across {total_restaurants} restaurants\n\n")
+            markdown_content += f"**Summary:** {total_deals} deals found across {total_restaurants} restaurants\n\n"
 
-            f.write("## Table of Contents\n\n")
+            markdown_content += "## Table of Contents\n\n"
             for restaurant_name in restaurants_with_deals.keys():
                 anchor = restaurant_name.lower().replace(' ', '-').replace('&', 'and')
-                f.write(f"- [{restaurant_name}](#{anchor}) ({len(restaurants_with_deals[restaurant_name])} deals)\n")
-            f.write("\n---\n\n")
+                markdown_content += f"- [{restaurant_name}](#{anchor}) ({len(restaurants_with_deals[restaurant_name])} deals)\n"
+            markdown_content += "\n---\n\n"
 
             for restaurant_name, deals in restaurants_with_deals.items():
-                f.write(f"## {restaurant_name}\n\n")
+                markdown_content += f"## {restaurant_name}\n\n"
 
                 for i, deal in enumerate(deals, 1):
-                    f.write(f"### Deal {i}: {deal['title']}\n")
-                    f.write(f"- **Deal ID:** {deal['dealId']}\n")
-                    f.write(f"- **Start Date:** {deal['startDate']}\n")
-                    f.write(f"- **End Date:** {deal['endDate']}\n")
-                    f.write(f"- **Powered By:** {deal['poweredBy']}\n")
+                    markdown_content += f"### Deal {i}: {deal['title']}\n"
+                    markdown_content += f"- **Deal ID:** {deal['dealId']}\n"
+                    markdown_content += f"- **Start Date:** {deal['startDate']}\n"
+                    markdown_content += f"- **End Date:** {deal['endDate']}\n"
+                    markdown_content += f"- **Powered By:** {deal['poweredBy']}\n"
                     if deal['percentageValue']:
-                        f.write(f"- **Discount:** {deal['percentageValue']}%\n")
-                    f.write(f"- **Description:** {deal['description']}\n")
-                    f.write(f"- **Redeemable:** {'Yes' if deal['isRedeemable'] else 'No'}\n")
+                        markdown_content += f"- **Discount:** {deal['percentageValue']}%\n"
+                    markdown_content += f"- **Description:** {deal['description']}\n"
+                    markdown_content += f"- **Redeemable:** {'Yes' if deal['isRedeemable'] else 'No'}\n"
                     if deal['targetBranches']:
-                        f.write(f"- **Target Branches:** {', '.join(deal['targetBranches'])}\n")
+                        markdown_content += f"- **Target Branches:** {', '.join(deal['targetBranches'])}\n"
                     if deal['associations']:
-                        f.write(f"- **Associations:** {', '.join(deal['associations'])}\n")
-                    f.write("\n---\n\n")
+                        markdown_content += f"- **Associations:** {', '.join(deal['associations'])}\n"
+                    markdown_content += "\n---\n\n"
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(markdown_content)
+
+        all_deals = []
+        for deals_list in restaurants_deals.values():
+            all_deals.extend(deals_list)
+
+        expiry_date = self.extract_expiry_from_deals(all_deals)
+
+        filename_base = f"{self.sanitize_filename(city)}_deals"
+        self.create_metadata_file(
+            filename_base=filename_base,
+            city=city,
+            deals_content=markdown_content,
+            expiry_date=expiry_date,
+            file_path=file_path
+        )
         
         self.logger.debug(f"Saved deals for {city} to {file_path}")
     
@@ -613,7 +690,8 @@ class DealScrapperService:
                     "cities_processed": self.cities_processed,
                     "total_restaurants": self.restaurants_processed,
                     "total_deals": self.deals_found,
-                    "execution_time_seconds": time.time() - self.start_time
+                    "execution_time_seconds": time.time() - self.start_time,
+                    "metadata_directory": os.path.join(self.output_dir, "metadata")
                 },
                 "city_breakdown": {}
             }
@@ -637,7 +715,8 @@ class DealScrapperService:
                 f.write(f"- **Cities Processed:** {self.cities_processed}/{self.total_cities}\n")
                 f.write(f"- **Total Restaurants:** {self.restaurants_processed}\n")
                 f.write(f"- **Total Deals Found:** {self.deals_found}\n")
-                f.write(f"- **Execution Time:** {(time.time() - self.start_time):.2f} seconds\n\n")
+                f.write(f"- **Execution Time:** {(time.time() - self.start_time):.2f} seconds\n")
+                f.write(f"- **Metadata Directory:** {os.path.join(self.output_dir, 'metadata')}\n\n")
                 
                 f.write("## City Breakdown\n\n")
                 f.write("| City | Restaurants | Deals |\n")

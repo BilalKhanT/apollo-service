@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from app.api.routes import crawl, cluster, scrape, logs, schedule, deal, deal_schedule, fb_scrape, fb_schedule
+from app.api.routes import crawl, cluster, scrape, logs, schedule, deal, deal_schedule, fb_scrape, fb_schedule, user_pref_route
 from app.utils.database import connect_to_mongo, close_mongo_connection
 from app.services.schedule_service import scheduler_service
 from app.utils.socket_manager import socket_manager
@@ -86,6 +86,7 @@ app.include_router(deal.router)
 app.include_router(deal_schedule.router)
 app.include_router(fb_scrape.router)
 app.include_router(fb_schedule.router)
+app.include_router(user_pref_route.router)
 
 socket_app = socketio.ASGIApp(
     socket_manager.sio,

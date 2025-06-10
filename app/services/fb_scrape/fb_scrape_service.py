@@ -5,9 +5,12 @@ import re
 import threading
 import logging
 import traceback
+import hashlib
+import uuid
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Callable
+import datefinder
 
 class FacebookScrapingService:
     
@@ -18,7 +21,7 @@ class FacebookScrapingService:
         output_dir: str = "facebook_data",
         max_workers: int = 20,
         progress_update_interval: int = 5,
-        batch_size: int = 50
+        batch_size: int = 50,
     ):
         self.logger = self._setup_logger()
 
@@ -51,8 +54,6 @@ class FacebookScrapingService:
         self.task_id = None
         self.task_manager = None
         self.progress_callback = None
-        
-        self.logger.info(f"FacebookScrapingService initialized with output_dir={output_dir}, max_workers={max_workers}, batch_size={batch_size}")
 
     def _setup_logger(self):
         logger = logging.getLogger("FacebookScrapingService")
@@ -302,6 +303,77 @@ class FacebookScrapingService:
                 filtered_posts.append(post)
         
         return filtered_posts
+    
+    def extract_expiry_date(self, text: str) -> Optional[str]:
+
+        if not text:
+            return None
+
+        expiry_keywords = ['valid', 'expires', 'expiry', 'till', 'until', 'deadline', 'ends', 'through', 'by']
+        sentences = re.split(r'[.!?]\s+', text.lower())
+        expiry_dates = []
+
+        for sentence in sentences:
+            if any(keyword in sentence for keyword in expiry_keywords):
+                self.logger.debug(f"Found expiry keyword in sentence: {sentence[:100]}...")
+                matches = list(datefinder.find_dates(sentence))
+
+                for match in matches:
+                    expiry_date = match.strftime("%Y-%m-%d")
+                    expiry_dates.append(expiry_date)
+                    self.logger.debug(f"Found expiry date: {expiry_date}")
+
+        if expiry_dates:
+            return expiry_dates[0]
+        else:
+            self.logger.debug("No expiry date found in text")
+            return None
+
+    def generate_content_checksum(self, content: str) -> str:
+        try:
+            hash_sha256 = hashlib.sha256()
+            hash_sha256.update(content.encode('utf-8'))
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            self.logger.error(f"Error generating checksum: {e}")
+            return "checksum_error"
+
+    def determine_source_from_post(self, post_data: Dict[str, Any]) -> str:
+        return 'facebook'
+
+    def create_metadata_file(self, filename_base: str, post_data: Dict[str, Any],
+                           category: str, expiry_date: Optional[str] = None, output_dir: Optional[str] = None,
+                           file_path: Optional[str] = None) -> str:
+        try:
+            metadata_dir = os.path.join(output_dir, "metadata")
+            os.makedirs(metadata_dir, exist_ok=True)
+            post_id = post_data.get('id', 'unknown')
+            message = post_data.get('message', '')
+
+            document_id = str(uuid.uuid4())
+
+            checksum = self.generate_content_checksum(message)
+
+            source = self.determine_source_from_post(post_data)
+
+            facebook_url = f"https://www.facebook.com/{post_id}" if post_id != 'unknown' else 'unknown'
+
+            metadata_content = f"document id: {document_id}\n"
+            metadata_content += f"document name: Facebook Post - {category}\n"
+            metadata_content += f"document url: {facebook_url}\n"
+            metadata_content += f"expiry: {expiry_date if expiry_date else 'none'}\n"
+            metadata_content += f"source: {source}\n"
+            metadata_content += f"checksum: {checksum}\n"
+
+            metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
+            with open(metadata_file_path, "w", encoding="utf-8") as f:
+                f.write(metadata_content)
+
+            self.logger.info(f"Metadata saved to: {metadata_file_path}")
+            return metadata_file_path
+        except Exception as e:
+            self.logger.error(f"Error creating metadata file: {str(e)}")
+            return ""
 
     def process_post_batch(self, batch_id: int, posts_batch: List[Dict[str, Any]], 
                           keywords: List[str], keyword_folders: Dict[str, str], 
@@ -312,7 +384,9 @@ class FacebookScrapingService:
             "posts_failed": 0,
             "category_counts": {},
             "keyword_matches": {keyword: {"loose_matches": 0, "strict_matches": 0} for keyword in keywords},
-            "processed_posts": []
+            "processed_posts": [],
+            "posts_with_expiry": 0,  
+            "posts_without_expiry": 0
         }
         
         try:
@@ -328,6 +402,15 @@ class FacebookScrapingService:
                     post_id = post.get("id", "unknown")
                     created_time = post.get("created_time", "")
                     attachments = post.get("attachments", {})
+                    expiry_date = self.extract_expiry_date(message)
+                
+                    if expiry_date:
+                        batch_result["posts_with_expiry"] += 1
+                        self.logger.debug(f"Found expiry date: {expiry_date} for post {post_id}")
+                    else:
+                        batch_result["posts_without_expiry"] += 1
+                        self.logger.debug(f"No expiry date found for post {post_id}")
+
                     save_folders = []
                     matching_keywords = []
                     for keyword in keywords:
@@ -351,16 +434,21 @@ class FacebookScrapingService:
                         "created_time": created_time,
                         "category": offer_category,
                         "attachments": self._process_attachments(attachments),
-                        "matching_keywords": matching_keywords
+                        "matching_keywords": matching_keywords,
+                        "expiry_date": expiry_date
                     }
                     batch_result["processed_posts"].append(post_data)
 
                     for folder in save_folders:
                         try:
                             folder_name = os.path.basename(folder)
-                            created_time_safe = created_time.replace(":", "-") if created_time else "unknown"
+                            if expiry_date:
+                                filename_date = expiry_date
+                            else:
+                                filename_date = "none"
                             
-                            file_path = os.path.join(folder, f"fb_post_{folder_name}_{offer_category}_{created_time_safe}.md")
+                            filename_base = f"fb_post_{folder_name}_{offer_category}_{filename_date}"
+                            file_path = os.path.join(folder, f"{filename_base}.md")
 
                             os.makedirs(folder, exist_ok=True)
                             
@@ -381,6 +469,16 @@ class FacebookScrapingService:
                                         if "media" in attachment and "image" in attachment["media"]:
                                             image_url = attachment["media"]["image"].get("src", "")
                                             f.write(f"![Image]({image_url})\n\n")
+
+                            self.create_metadata_file(
+                                filename_base=filename_base,
+                                post_data=post,
+                                category=offer_category,
+                                expiry_date=expiry_date,
+                                file_path=file_path,
+                                output_dir=final_output_dir
+                            )
+
                         except Exception as file_error:
                             self.logger.warning(f"Error saving post to file {file_path}: {str(file_error)}")
                     
@@ -445,6 +543,15 @@ class FacebookScrapingService:
         with self.counter_lock:
             self.posts_processed += batch_result["posts_processed"]
             self.posts_failed += batch_result["posts_failed"]
+            if hasattr(self, 'posts_with_expiry'):
+                self.posts_with_expiry += batch_result.get("posts_with_expiry", 0)
+            else:
+                self.posts_with_expiry = batch_result.get("posts_with_expiry", 0)
+                
+            if hasattr(self, 'posts_without_expiry'):
+                self.posts_without_expiry += batch_result.get("posts_without_expiry", 0)
+            else:
+                self.posts_without_expiry = batch_result.get("posts_without_expiry", 0)
             self.current_batch += 1
             self.publish_progress()
 
@@ -476,6 +583,8 @@ class FacebookScrapingService:
         self.processed_posts_data = []
         self.category_counts = {}
         self.keyword_matches = {}
+        self.posts_with_expiry = 0
+        self.posts_without_expiry = 0
         
         self.publish_progress(force=True)
         
@@ -638,6 +747,8 @@ class FacebookScrapingService:
                 "posts_processed": self.posts_processed,
                 "posts_found": self.posts_found,
                 "posts_failed": self.posts_failed,
+                "posts_with_expiry": getattr(self, 'posts_with_expiry', 0),  
+                "posts_without_expiry": getattr(self, 'posts_without_expiry', 0),
                 "categories_found": self.category_counts,
                 "keyword_matches": self.keyword_matches,
                 "output_directory": final_output_dir,
@@ -680,6 +791,7 @@ class FacebookScrapingService:
     def _create_summary_file(self, output_dir: str, keywords: List[str], start_date: str, end_date: str):
         try:
             summary_path = os.path.join(output_dir, "summary.md")
+            metadata_dir = os.path.join(output_dir, "metadata")
             
             with open(summary_path, "w", encoding="utf-8") as f:
                 f.write(f"# Facebook Scraping Summary\n\n")
@@ -688,10 +800,13 @@ class FacebookScrapingService:
                 f.write(f"**Total Posts Found:** {self.posts_found}\n")
                 f.write(f"**Total Posts Processed:** {self.posts_processed}\n")
                 f.write(f"**Total Posts Failed:** {self.posts_failed}\n")
+                f.write(f"**Posts with Expiry Date:** {getattr(self, 'posts_with_expiry', 0)}\n")  
+                f.write(f"**Posts without Expiry Date:** {getattr(self, 'posts_without_expiry', 0)}\n")  
                 f.write(f"**Posts Collected for Database:** {len(self.processed_posts_data)}\n")
                 f.write(f"**Processing Method:** Parallel processing with {self.max_workers} workers\n")
                 f.write(f"**Batches Processed:** {self.current_batch}/{self.total_batches}\n")
-                f.write(f"**Execution Time:** {time.time() - self.start_time:.2f} seconds\n\n")
+                f.write(f"**Execution Time:** {time.time() - self.start_time:.2f} seconds\n")
+                f.write(f"**Metadata Directory:** {metadata_dir}\n\n")
                 
                 if keywords:
                     f.write("## Keyword Folder Assignment\n\n")

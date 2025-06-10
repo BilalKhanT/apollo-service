@@ -9,7 +9,7 @@ class LogEntry(BaseModel):
     message: str = Field(description="Log message", example="Processing completed successfully")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "task_id": "123e4567-e89b-12d3-a456-426614174000",
                 "timestamp": "2025-01-27T15:30:45.000Z",
@@ -23,7 +23,7 @@ class LogResponse(BaseResponse):
     count: int = Field(description="Number of log entries returned", example=25)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Logs retrieved successfully",

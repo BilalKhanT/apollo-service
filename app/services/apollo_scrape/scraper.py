@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 import time
 import hashlib
+import uuid
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import logging
@@ -23,16 +24,19 @@ class ClusterScraper:
         metadata_dir: str = "document_metadata",
         expiry_days: Optional[int] = None,
         progress_update_interval: int = 2,  
-        max_workers: int = 20  
+        max_workers: int = 20,
+        min_content_chars: int = 200  
     ):
 
         self.logger = self._setup_logger()
         self.json_file_path = json_file_path
         self.output_dir = output_dir
         self.metadata_dir = metadata_dir
+        self.document_metadata_dir = os.path.join(self.metadata_dir, "files")
         self.expiry_days = expiry_days
         self.progress_update_interval = progress_update_interval
         self.max_workers = max_workers
+        self.min_content_chars = min_content_chars  
         self.clusters_data = self.load_clusters_json()
         self.status = "initialized"
         self.progress = 0.0
@@ -40,6 +44,7 @@ class ClusterScraper:
         self.pages_scraped = 0
         self.pages_failed = 0
         self.pages_processed = 0
+        self.pages_skipped_short = 0  
         self.total_pages = 0
         self.current_cluster_id = ""
         self.current_url = ""
@@ -49,7 +54,7 @@ class ClusterScraper:
         self.task_manager = None
         self.progress_callback = None
         
-        self.logger.info(f"ClusterScraper initialized with output_dir={output_dir}, metadata_dir={metadata_dir}, max_workers={max_workers}")
+        self.logger.info(f"ClusterScraper initialized with output_dir={output_dir}, metadata_dir={metadata_dir}, max_workers={max_workers}, min_content_chars={min_content_chars}")
     
     def _setup_logger(self):
         logger = logging.getLogger("ClusterScraper")
@@ -70,6 +75,25 @@ class ClusterScraper:
     def set_progress_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         self.progress_callback = callback
         self.logger.info("Progress callback function set")
+    
+    def normalize_path_name(self, name: str) -> str:
+        if not name:
+            return "unknown"
+
+        normalized = re.sub(r'[^\w]', ' ', name.lower())
+        return normalized if normalized else "unknown"
+    
+    def count_content_characters(self, markdown_content: str) -> int:
+        if not markdown_content:
+            return 0
+
+        content_no_urls = re.sub(r'https?://\S+', ' ', markdown_content)
+
+        content_no_links = re.sub(r'\[.*?\]\(.*?\)', '', content_no_urls)
+
+        cleaned_content = re.sub(r'\s+', ' ', content_no_links).strip()
+
+        return len(cleaned_content)
     
     def publish_progress(self, force: bool = False) -> None:
         should_update = (
@@ -92,6 +116,7 @@ class ClusterScraper:
             "pages_scraped": self.pages_scraped,
             "pages_failed": self.pages_failed,
             "pages_processed": self.pages_processed,
+            "pages_skipped_short": self.pages_skipped_short,  
             "total_pages": self.total_pages,
             "current_cluster": self.current_cluster_id,
             "current_url": self.current_url,
@@ -112,6 +137,7 @@ class ClusterScraper:
                             "pages_scraped": self.pages_scraped,
                             "pages_failed": self.pages_failed,
                             "pages_processed": self.pages_processed,
+                            "pages_skipped_short": self.pages_skipped_short,
                             "total_pages": self.total_pages,
                             "current_cluster": self.current_cluster_id
                         }
@@ -123,6 +149,7 @@ class ClusterScraper:
                         self.task_id,
                         f"Scraping progress: {self.pages_processed}/{self.total_pages} pages processed, "
                         f"{self.pages_scraped} successful, {self.pages_failed} failed, "
+                        f"{self.pages_skipped_short} skipped (short content), "
                         f"progress: {self.progress:.1f}%",
                         "info"
                     )
@@ -139,6 +166,7 @@ class ClusterScraper:
             self.logger.info(
                 f"Progress: {self.pages_processed}/{self.total_pages} pages processed, "
                 f"{self.pages_scraped} successful, {self.pages_failed} failed, "
+                f"{self.pages_skipped_short} skipped (short content), "
                 f"{self.progress:.1f}%"
             )
     
@@ -220,8 +248,8 @@ class ClusterScraper:
 
 
             # # FBL
-            for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div', 'button','a','section'],
-            class_=['top-header','desk-header','mobile-header','breadcrumbs-bx','top-footer','middle-footer fb-footer','lowerfooter','nav-link','standard-btn mt-3','tab-sec-1 alpha importent-sec']):
+            for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div', 'button','a','section','p','span','strong','italic'],
+            class_=['top-header','desk-header','mobile-header','breadcrumbs-bx','top-footer','middle-footer fb-footer','lowerfooter','nav-link','standard-btn mt-3','tab-sec-1 alpha importent-sec','apply-now-sec tab-sec-2 applyNow-gap','nectar-skip-to-content','small-nav','col span_9 col_last','inner-wrap','col span_12','a7c1dd3e','screen-reader-text','latest-offer-tab']):
                 tag.decompose()
 
             # #BAFL
@@ -233,7 +261,7 @@ class ClusterScraper:
             #         'pum-content popmake-content',' col-sm-10 no-padding classForRes','fontEm13 normalFont marginTop0',
             #         'col-sm-10 no-padding','countrySelect clearfix','col-sm-2 no-padding',' col-sm-10 no-padding classForRes'
             # ]):
-                tag.decompose()
+                # tag.decompose()
 
             for img in soup.find_all('img'):
                 img.decompose()
@@ -243,6 +271,10 @@ class ClusterScraper:
 
             for picture in soup.find_all('picture'):
                 picture.decompose()
+
+            # for UBL comment out this
+            for form in soup.find_all('form'):
+                form.decompose()
 
             for svg in soup.find_all('svg'):
                 svg.decompose()
@@ -266,9 +298,16 @@ class ClusterScraper:
                                 elem.decompose()
                         heading.decompose()
 
-            content = soup.find_all(['article', 'section', 'main', 'div', 'main id', 'p'], 
-                                   class_=['content', 'article-body', 'main-content',  'show', 
-                                          'main-heading','tab-content inner-txt-bx','container'])
+                    # Also specifically remove the "btm-apply-form" section
+                    for form_section in soup.find_all('section', id='btm-apply-form'):
+                        form_section.decompose()
+
+            # Replace <a> tags with their text (remove links but keep text)
+            for a in soup.find_all('a'):
+                a.replace_with(a.get_text())
+
+            # #FBL
+            content = soup.find_all(['article', 'section', 'main', 'div', 'main id', 'p', 'span', 'button'], class_=[])
             
             if not content:
                 content = soup.body
@@ -287,8 +326,8 @@ class ClusterScraper:
                 else:
                     page_title = "untitled"
 
-            clean_title = re.sub(r'[^\w\s-]', '', page_title).strip()
-            clean_title = re.sub(r'[-\s]+', '-', clean_title)
+            clean_title = re.sub(r'[^\w\s-]', ' ', page_title).strip()
+            clean_title = re.sub(r'[-\s]+', ' ', clean_title)
 
             if not clean_title:
                 clean_title = "untitled-content"
@@ -296,7 +335,6 @@ class ClusterScraper:
             markdown = md(str(content), heading_style="ATX")
 
             markdown = re.sub(r'!\[.*?\]\(.*?\)', '', markdown)
-
             markdown = re.sub(r'https?://\S+\.(jpg|jpeg|png|gif|svg|webp)(\?\S+)?', '', markdown, flags=re.IGNORECASE)
             
             return markdown, clean_title, page_title
@@ -307,6 +345,7 @@ class ClusterScraper:
             return "", "", ""
     
     def determine_source_from_url(self, url: str) -> str:
+        """Determine the source type based on the URL"""
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
@@ -315,8 +354,14 @@ class ClusterScraper:
         else:
             return 'website'
     
-    def generate_document_id(self, content: str) -> str:
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    def generate_checksum(self, content: str) -> str:
+        try:
+            hash_sha256 = hashlib.sha256()
+            hash_sha256.update(content.encode('utf-8'))
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            self.logger.error(f"Error generating checksum: {e}")
+            return "checksum_error"
     
     def create_metadata_file(
         self, 
@@ -326,46 +371,58 @@ class ClusterScraper:
         url: str, 
         content: str, 
         expiry: Optional[str] = None
-    ) -> None:
-        os.makedirs(metadata_dir, exist_ok=True)
-        
-        source = self.determine_source_from_url(url)
-        document_id = self.generate_document_id(content)
-        
-        metadata_content = f"document name: {document_name}\n"
-        metadata_content += f"document url: {url}\n"
-        metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
-        metadata_content += f"source: {source}\n"
-        metadata_content += f"document_id: {document_id}\n"
-        
-        metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
-        with open(metadata_file_path, "w", encoding="utf-8") as f:
-            f.write(metadata_content)
-        
-        self.logger.debug(f"Metadata saved to: {metadata_file_path}")
+    ) -> str:
+
+        try:
+            os.makedirs(self.document_metadata_dir, exist_ok=True)
+
+            source = self.determine_source_from_url(url)
+            checksum = self.generate_checksum(content)
+            document_id = str(uuid.uuid4())
+
+            metadata_content = f"document id: {document_id}\n"
+            metadata_content += f"document name: {document_name}\n"
+            metadata_content += f"document url: {url}\n"
+            metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
+            metadata_content += f"source: {source}\n"
+            metadata_content += f"checksum: {checksum}\n"
+
+            metadata_file_path = os.path.join(self.document_metadata_dir, f"{filename_base}.meta")
+            with open(metadata_file_path, "w", encoding="utf-8") as f:
+                f.write(metadata_content)
+
+            self.logger.info(f"Metadata saved to: {metadata_file_path}")
+            return metadata_file_path
+        except Exception as e:
+            self.logger.error(f"Error creating metadata file: {str(e)}")
+            return ""
     
     def url_to_directory_path(self, url: str) -> str:
         parsed_url = url.split("://", 1)
         if len(parsed_url) < 2:
-            return "unknown"
-        
+            return os.path.join(self.output_dir, "unknown")
+
         domain_and_path = parsed_url[1].split("/", 1)
-        domain = domain_and_path[0]
+        domain = self.normalize_path_name(domain_and_path[0])
+
         dir_path = os.path.join(self.output_dir, domain)
 
         if len(domain_and_path) > 1 and domain_and_path[1]:
             path_parts = domain_and_path[1].split("/")
             for part in path_parts[:-1]:  
                 if part:
-                    dir_path = os.path.join(dir_path, part)
-        
+                    normalized_part = self.normalize_path_name(part)
+                    dir_path = os.path.join(dir_path, normalized_part)
+
         return dir_path
     
     def process_url(self, url: str, cluster_id: str, expiry_date: Optional[str]) -> Dict[str, Any]:
         result = {
             "url": url,
             "success": False,
-            "error": None
+            "error": None,
+            "char_count": 0,
+            "skipped_short": False
         }
         
         try:
@@ -392,39 +449,56 @@ class ClusterScraper:
             html = response.text
             markdown_content, filename_base, document_title = self.parse_and_convert_to_markdown(html)
             
-            if markdown_content:
-                dir_path = self.url_to_directory_path(url)
-                os.makedirs(dir_path, exist_ok=True)
-                
-                file_path = os.path.join(dir_path, f"{filename_base}.md")
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(markdown_content)
-                
-                self.logger.info(f"Content saved to: {file_path}")
-
-                self.create_metadata_file(
-                    self.metadata_dir,
-                    filename_base,
-                    document_title,
-                    url,
-                    markdown_content,
-                    expiry_date
-                )
-
-                with self.counter_lock:
-                    self.pages_scraped += 1
-                    self.pages_processed += 1
-                    self.publish_progress()
-                
-                result["success"] = True
-                return result
-            else:
+            if not markdown_content:
                 result["error"] = "No meaningful content extracted"
                 with self.counter_lock:
                     self.pages_failed += 1
                     self.pages_processed += 1
                     self.publish_progress()
                 return result
+
+            char_count = self.count_content_characters(markdown_content)
+            result["char_count"] = char_count
+            
+            if char_count < self.min_content_chars:
+                result["error"] = f"Content too short ({char_count} characters, minimum {self.min_content_chars})"
+                result["skipped_short"] = True
+                self.logger.info(f"Skipping {url} - Content too short ({char_count} characters)")
+                with self.counter_lock:
+                    self.pages_skipped_short += 1
+                    self.pages_processed += 1
+                    self.publish_progress()
+                return result
+
+            normalized_filename = self.normalize_path_name(filename_base)
+            if not normalized_filename:
+                normalized_filename = "untitled"
+
+            dir_path = self.url_to_directory_path(url)
+            os.makedirs(dir_path, exist_ok=True)
+
+            file_path = os.path.join(dir_path, f"{normalized_filename}.md")
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(markdown_content)
+            
+            self.logger.info(f"Content saved to: {file_path} ({char_count} characters)")
+
+            self.create_metadata_file(
+                self.metadata_dir,
+                normalized_filename,
+                document_title,
+                url,
+                markdown_content,
+                expiry_date
+            )
+
+            with self.counter_lock:
+                self.pages_scraped += 1
+                self.pages_processed += 1
+                self.publish_progress()
+            
+            result["success"] = True
+            return result
                 
         except Exception as e:
             self.logger.error(f"Error processing {url}: {str(e)}")
@@ -456,11 +530,13 @@ class ClusterScraper:
         self.pages_scraped = 0
         self.pages_failed = 0
         self.pages_processed = 0
+        self.pages_skipped_short = 0 
         self.total_pages = 0
         self.error = None  
         self.publish_progress(force=True)
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.metadata_dir, exist_ok=True)
+        os.makedirs(self.document_metadata_dir, exist_ok=True)
         expiry_date = None
         if self.expiry_days is not None:
             expiry_date = (datetime.now() + timedelta(days=self.expiry_days)).strftime('%Y-%m-%d')
@@ -487,6 +563,7 @@ class ClusterScraper:
                 "clusters_scraped": [],
                 "pages_scraped": 0,
                 "pages_failed": 0,
+                "pages_skipped_short": 0,
                 "execution_time_seconds": time.time() - self.start_time
             }
         
@@ -501,6 +578,7 @@ class ClusterScraper:
             "clusters_scraped": [],
             "pages_scraped": 0,
             "pages_failed": 0,
+            "pages_skipped_short": 0,
             "errors": []
         }
 
@@ -514,6 +592,7 @@ class ClusterScraper:
                 "cluster_id": cluster_id,
                 "urls_scraped": 0,
                 "urls_failed": 0,
+                "urls_skipped_short": 0,
                 "errors": []
             }
 
@@ -530,6 +609,8 @@ class ClusterScraper:
                         
                         if result["success"]:
                             cluster_results["urls_scraped"] += 1
+                        elif result["skipped_short"]:
+                            cluster_results["urls_skipped_short"] += 1
                         else:
                             cluster_results["urls_failed"] += 1
                             cluster_results["errors"].append({
@@ -556,16 +637,22 @@ class ClusterScraper:
 
         results["pages_scraped"] = self.pages_scraped
         results["pages_failed"] = self.pages_failed
+        results["pages_skipped_short"] = self.pages_skipped_short
         results["total_pages"] = self.total_pages
         results["execution_time_seconds"] = time.time() - self.start_time
 
         self.status = "completed"
         self.progress = 60.0  
         self.publish_progress(force=True)
-        
-        self.logger.info(
-            f"Scraping completed. Scraped {self.pages_scraped} pages from {len(results['clusters_scraped'])} clusters."
-        )
+
+        self.logger.info(f"\n{'='*60}")
+        self.logger.info("SCRAPING SUMMARY")
+        self.logger.info(f"{'='*60}")
+        self.logger.info(f"Total URLs processed: {self.pages_processed}")
+        self.logger.info(f"Files successfully saved: {self.pages_scraped}")
+        self.logger.info(f"Files skipped (short content): {self.pages_skipped_short}")
+        self.logger.info(f"Files skipped (errors): {self.pages_failed}")
+        self.logger.info(f"{'='*60}")
         
         return results
     
@@ -600,6 +687,7 @@ class ClusterScraper:
             'pages_scraped': self.pages_scraped,
             'pages_failed': self.pages_failed,
             'pages_processed': self.pages_processed,
+            'pages_skipped_short': self.pages_skipped_short,  
             'total_pages': self.total_pages,
             'current_cluster': self.current_cluster_id,
             'current_url': self.current_url,

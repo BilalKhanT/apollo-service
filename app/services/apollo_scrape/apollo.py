@@ -6,7 +6,6 @@ import os
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import logging
-from concurrent.futures import ThreadPoolExecutor
 import queue
 import threading
 from datetime import datetime
@@ -66,8 +65,8 @@ class Apollo:
 
         if url_patterns_to_ignore is None:
             url_patterns_to_ignore = [
-                r'logout', r'login', r'signin', r'signout',
-                r'\.(zip|rar|exe|dmg|jpeg|png|gif|mov|jpg|mp3|m4v|avi|mp4|aspx)$',
+                r'logout', r'login', r'signin', r'signout', r'apply-now', r'Applynow', r'form', r'forms', r'sitemap',
+                r'\.(zip|rar|exe|dmg|jpeg|png|gif|mov|jpg|mp3|m4v|avi|mp4|aspx|wav)$',
                 r'\.jpg',
                 r'/404$',
             ]
@@ -108,7 +107,8 @@ class Apollo:
         self.counter_lock = threading.Lock()
         self.dns_cache_lock = threading.Lock()
 
-        self.last_activity_time = time.time()
+        self.last_queue_activity_time = time.time()
+        self.last_processing_activity_time = time.time()
         self.last_activity_lock = threading.Lock()
         self.inactive_time = 0
 
@@ -120,7 +120,10 @@ class Apollo:
         
         self.initial_processing_done = threading.Event()
         self.active_worker_count = threading.Semaphore(num_workers)
-        self.worker_wait_timeout = 3
+        self.worker_wait_timeout = 3  
+
+        self.worker_states = {}
+        self.worker_states_lock = threading.Lock()
 
         self.start_time = time.time()
 
@@ -133,7 +136,7 @@ class Apollo:
 
         self.status_callbacks = []
         self.last_status_update = time.time()
-        self.status_update_interval = 2.0
+        self.status_update_interval = 10.0  
 
         self.initial_queue_size = 1
         self.max_queue_size_reached = 1
@@ -192,12 +195,20 @@ class Apollo:
         
         return logger
     
-    def update_last_activity(self):
+    def update_queue_activity(self):
         if self.stop_requested:
             return
             
         with self.last_activity_lock:
-            self.last_activity_time = time.time()
+            self.last_queue_activity_time = time.time()
+            self.inactive_time = 0
+
+    def update_processing_activity(self):
+        if self.stop_requested:
+            return
+            
+        with self.last_activity_lock:
+            self.last_processing_activity_time = time.time()
             self.inactive_time = 0
     
     def resolve_domain(self, domain):
@@ -265,11 +276,11 @@ class Apollo:
         
         return False
     
-    def check_limits_reached(self):
+    def check_crawl_complete(self):
         if self.stop_event.is_set() or self.stop_requested:
             self.logger.info("Stop event detected - crawler should terminate")
             return True
-            
+
         with self.counter_lock:
             if self.total_pages_scraped >= self.max_pages_to_scrape:
                 self.logger.info(f"Maximum pages limit reached: {self.total_pages_scraped}/{self.max_pages_to_scrape}")
@@ -278,42 +289,33 @@ class Apollo:
                 self.logger.info(f"Maximum links limit reached: {self.total_links_processed}/{self.max_links_to_scrape}")
                 return True
 
-        if not self.stop_requested:
+        queue_empty = self.links_queue.empty()
+        
+        with self.worker_states_lock:
+            active_worker_count = sum(1 for state in self.worker_states.values() if state == 'processing')
+            waiting_worker_count = sum(1 for state in self.worker_states.values() if state == 'waiting')
+            total_active = active_worker_count + waiting_worker_count
+
+        if queue_empty and active_worker_count == 0:
+            if self.initial_processing_done.is_set():
+                self.logger.info("Queue empty and no workers processing - crawl complete")
+                return True
+
+        if queue_empty and self.initial_processing_done.is_set():
             with self.last_activity_lock:
                 current_time = time.time()
-                inactive_duration = current_time - self.last_activity_time
-                self.inactive_time = inactive_duration
+                processing_inactive_time = current_time - self.last_processing_activity_time
+                self.inactive_time = processing_inactive_time
 
-                if self.initial_processing_done.is_set():
-                    active = self.num_workers - self.active_worker_count._value
-                    idle = self.active_worker_count._value
-                    
-                    self.active_workers_count = active
-                    self.idle_workers_count = idle
-                    
-                    if self.links_queue.empty() and idle/self.num_workers >= self.idle_detection_threshold:
-                        self.inactivity_timeout = self.reduced_inactivity_timeout
-                        
-                        if inactive_duration < 5.0:
-                            self.logger.info(f"Most workers idle ({idle}/{self.num_workers}), reducing inactivity timeout to {self.reduced_inactivity_timeout}s")
-                    else:
-                        self.inactivity_timeout = self.initial_inactivity_timeout
+                if total_active / self.num_workers >= self.idle_detection_threshold:
+                    timeout_to_use = self.reduced_inactivity_timeout
+                else:
+                    timeout_to_use = self.initial_inactivity_timeout
                 
-                if inactive_duration >= self.inactivity_timeout:
-                    self.logger.info(f"Inactivity timeout reached. No new links added for {inactive_duration:.1f} seconds.")
+                if processing_inactive_time >= timeout_to_use:
+                    self.logger.info(f"Inactivity timeout reached. No processing activity for {processing_inactive_time:.1f} seconds.")
                     return True
 
-        current_time = time.time()
-        if (current_time - self.last_idle_check >= self.idle_check_interval and 
-            self.initial_processing_done.is_set() and 
-            self.links_queue.empty()):
-            
-            self.last_idle_check = current_time
-            
-            if self.active_worker_count._value == self.num_workers:
-                self.logger.info(f"All workers idle and queue empty for {self.idle_check_interval}s - stopping crawler")
-                return True
-        
         return False
     
     def calculate_progress(self):
@@ -392,6 +394,9 @@ class Apollo:
     
     def process_url(self, worker_id):
         self.logger.info(f"Worker {worker_id} started")
+
+        with self.worker_states_lock:
+            self.worker_states[worker_id] = 'idle'
         
         scraper = self.get_scraper()
         
@@ -409,13 +414,21 @@ class Apollo:
                 self.active_worker_count.acquire()
                 
                 try:
-                    if self.check_limits_reached():
+                    with self.worker_states_lock:
+                        self.worker_states[worker_id] = 'waiting'
+
+                    if self.check_crawl_complete():
                         self.stop_event.set()
-                        self.logger.info(f"Worker {worker_id} stopping due to limits reached")
+                        self.logger.info(f"Worker {worker_id} stopping due to crawl completion")
                         break
 
                     try:
                         current_url, current_depth = self.links_queue.get(timeout=self.worker_wait_timeout)
+
+                        with self.worker_states_lock:
+                            self.worker_states[worker_id] = 'processing'
+
+                        self.update_processing_activity()
 
                         if self.stop_event.is_set() or self.stop_requested:
                             self.links_queue.task_done()
@@ -429,7 +442,7 @@ class Apollo:
                             
                     except queue.Empty:
                         if self.initial_processing_done.is_set():
-                            if self.links_queue.empty() and self.active_worker_count._value == self.num_workers:
+                            if self.check_crawl_complete():
                                 self.logger.info(f"Worker {worker_id} exiting - crawl appears complete")
                                 break
                         
@@ -475,7 +488,7 @@ class Apollo:
                         
                         self.logger.info(f"Worker {worker_id} processing: {current_url} (Depth: {current_depth})")
 
-                        if self.check_limits_reached():
+                        if self.check_crawl_complete():
                             self.stop_event.set()
                             self.logger.info(f"Worker {worker_id} stopping due to limits reached")
                             if not task_completed:
@@ -508,6 +521,16 @@ class Apollo:
 
                         final_url = response.url
                         redirect_happened = current_url != final_url
+
+                        if redirect_happened:
+                            with self.visited_urls_lock:
+                                if final_url in self.visited_urls:
+                                    self.logger.info(f"Worker {worker_id}: Final URL {final_url} already processed, skipping")
+                                    if not task_completed:
+                                        self.links_queue.task_done()
+                                        task_completed = True
+                                    continue
+                                self.visited_urls.add(final_url)
 
                         if final_url.endswith('/404') or '404' in final_url.split('/')[-1]:
                             with self.not_found_urls_lock:
@@ -609,7 +632,8 @@ class Apollo:
                                                                              len(self.url_queue) + len(self.frontier))
                             
                             if new_links_added > 0 and not self.stop_requested:
-                                self.update_last_activity()
+                                self.update_queue_activity()
+                                self.update_processing_activity()
 
                             if not self.initial_processing_done.is_set() and new_links_added > 0:
                                 self.initial_processing_done.set()
@@ -648,6 +672,8 @@ class Apollo:
                     self.active_worker_count.release()
         
         finally:
+            with self.worker_states_lock:
+                self.worker_states[worker_id] = 'finished'
             self.release_scraper(scraper)
             self.logger.info(f"Worker {worker_id} finished")
     
@@ -668,7 +694,8 @@ class Apollo:
             'max_depth': self.depth_limit,
             'is_complete': is_final,
             'execution_time_seconds': time.time() - self.start_time,
-            'was_stopped': self.stop_requested or self.stop_event.is_set()  # FIXED: Track if stopped
+            'was_stopped': self.stop_requested or self.stop_event.is_set(),
+            'queue_size_remaining': self.links_queue.qsize() 
         }
 
         result_data = {
@@ -692,6 +719,7 @@ class Apollo:
             self.logger.info(f"Total URLs with errors: {len(self.error_urls)}")
             self.logger.info(f"Results saved to {self.output_file}")
             self.logger.info(f"Total execution time: {time.time() - self.start_time:.2f} seconds")
+            self.logger.info(f"Final queue size: {self.links_queue.qsize()}")
     
     def update_status(self):
         if self.stop_requested or self.stop_event.is_set():
@@ -700,6 +728,10 @@ class Apollo:
             current_status = "running"
             
         self.progress = self.calculate_progress()
+
+        with self.worker_states_lock:
+            worker_status = {state: sum(1 for s in self.worker_states.values() if s == state)
+                           for state in ['waiting', 'processing', 'finished', 'idle']}
         
         self.status = {
             "status": current_status,
@@ -710,8 +742,15 @@ class Apollo:
             "queue_size": len(self.url_queue),
             "frontier_size": len(self.frontier),
             "inactive_time": self.inactive_time,
-            "was_stopped": self.stop_requested  
+            "was_stopped": self.stop_requested,
+            "worker_states": worker_status  
         }
+
+        if current_status == "running":
+            self.logger.info(f"Status: Queue={self.links_queue.qsize()}, "
+                           f"Workers={worker_status}, "
+                           f"Pages={self.total_pages_scraped}, "
+                           f"Links={len(self.all_links)}")
         
         for callback in self.status_callbacks:
             try:
@@ -736,21 +775,10 @@ class Apollo:
         
         try:
             while not self.stop_event.is_set() and not self.stop_requested:
-                if (self.initial_processing_done.is_set() and 
-                    self.links_queue.empty() and 
-                    self.active_worker_count._value == self.num_workers):
-                    
-                    self.logger.info(f"Queue empty and all workers idle ({self.active_worker_count._value}/{self.num_workers}) - crawl complete")
-                    break
-
-                with self.last_activity_lock:
-                    current_time = time.time()
-                    self.inactive_time = current_time - self.last_activity_time
-
-                if self.check_limits_reached():
+                if self.check_crawl_complete():
                     if not self.stop_requested:  
                         self.stop_event.set()
-                    self.logger.info("Limits reached - stopping crawl from main thread")
+                    self.logger.info("Crawl completion detected - stopping crawl from main thread")
                     break
 
                 current_time = time.time()
@@ -758,16 +786,10 @@ class Apollo:
                     self.update_status()
                     self.last_status_update = current_time
 
-                if time.time() - self.last_idle_check >= self.idle_check_interval:
-                    self.last_idle_check = time.time()
-                    active = self.num_workers - self.active_worker_count._value
-                    idle = self.active_worker_count._value
-                    self.logger.debug(f"Worker status: {active} active, {idle} idle, queue size: {self.links_queue.qsize()}")
-
                 if not self.stop_requested:
                     self.save_results(False)
                 
-                time.sleep(1)
+                time.sleep(5)  
         
         except KeyboardInterrupt:
             self.stop_event.set()
@@ -778,12 +800,16 @@ class Apollo:
         self.logger.info("Stop event set - waiting for workers to finish")
 
         self.logger.info("Waiting for workers to finish...")
-        for worker in self.workers:
-            worker.join(timeout=5)
+        for i, worker in enumerate(self.workers):
+            worker.join(timeout=10)  
+            if worker.is_alive():
+                self.logger.warning(f"Worker {i} didn't terminate within timeout")
 
-        active_count = sum(1 for w in self.workers if w.is_alive())
-        if active_count > 0:
-            self.logger.warning(f"{active_count} worker threads didn't terminate properly")
+        with self.worker_states_lock:
+            final_worker_status = {state: sum(1 for s in self.worker_states.values() if s == state)
+                                 for state in ['waiting', 'processing', 'finished', 'idle']}
+        
+        self.logger.info(f"Final worker status: {final_worker_status}")
 
         self.save_results(True)
         end_time = time.time()
@@ -807,8 +833,10 @@ class Apollo:
             self.stop_event.set()
             self.status = "stopping"
 
-            for worker in self.workers:
-                worker.join(timeout=5)
+            for i, worker in enumerate(self.workers):
+                worker.join(timeout=10)
+                if worker.is_alive():
+                    self.logger.warning(f"Worker {i} didn't terminate properly")
 
             self.save_results(True)
 
@@ -827,6 +855,10 @@ class Apollo:
             current_status = "stopped"
         else:
             current_status = "running"
+
+        with self.worker_states_lock:
+            worker_status = {state: sum(1 for s in self.worker_states.values() if s == state)
+                           for state in ['waiting', 'processing', 'finished', 'idle']}
         
         status = {
             'status': current_status,
@@ -837,7 +869,9 @@ class Apollo:
             'queue_size': len(self.url_queue),
             'frontier_size': len(self.frontier),
             'inactive_time': self.inactive_time,
-            'was_stopped': self.stop_requested  
+            'was_stopped': self.stop_requested,
+            'worker_states': worker_status,
+            'queue_size_remaining': self.links_queue.qsize()
         }
         
         return status
@@ -854,7 +888,8 @@ class Apollo:
                 'total_direct_document_links': len(self.document_links),
                 'total_404_urls': len(self.not_found_urls),
                 'total_error_urls': len(self.error_urls),
-                'was_stopped': self.stop_requested  
+                'was_stopped': self.stop_requested,
+                'final_queue_size': self.links_queue.qsize()
             },
             'all_links': list(self.all_links),
             'direct_document_links': list(self.document_links),
@@ -885,6 +920,9 @@ class Apollo:
                 
         self.url_queue.clear()
         self.frontier.clear()
+
+        with self.worker_states_lock:
+            self.worker_states.clear()
 
         self.total_links_processed = 0
         self.total_pages_scraped = 0

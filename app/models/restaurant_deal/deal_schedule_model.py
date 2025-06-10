@@ -43,7 +43,7 @@ class DealScheduleRequest(BaseModel):
     
     class Config:
         use_enum_values = True
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "cities": ["Karachi", "Lahore", "Islamabad"],
                 "schedule_name": "Daily Deal Scraping",
@@ -74,7 +74,7 @@ class DealScheduleResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "789e0123-e89b-12d3-a456-426614174000",
                 "cities": ["Karachi", "Lahore", "Islamabad"],
@@ -122,7 +122,7 @@ class DealScheduleUpdateRequest(BaseModel):
     
     class Config:
         use_enum_values = True
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "cities": ["Karachi", "Lahore", "Islamabad", "Faisalabad"],
                 "schedule_name": "Updated Daily Deal Scraping",
@@ -137,7 +137,7 @@ class DealScheduleListResponse(BaseResponse):
     total_count: int = Field(description="Total number of schedules", example=5)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Deal schedules retrieved successfully",
@@ -176,7 +176,7 @@ class DealScheduleStatusResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "789e0123-e89b-12d3-a456-426614174000",
                 "status": "active",
@@ -196,7 +196,7 @@ class DealScheduleActionResponse(BaseResponse):
     action: str = Field(description="Action that was performed", example="paused")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Deal schedule paused successfully",

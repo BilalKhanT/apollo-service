@@ -72,6 +72,7 @@ async def connect_to_mongo():
         from app.models.database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
         from app.models.database.fb_scrape.fb_result_model import FacebookResult
         from app.models.database.fb_scrape.fb_schedule_model import FacebookScrapeSchedule
+        from app.models.database.apollo_scraper.user_pref_db_model import UserPreference
 
         await init_beanie(
             database=db.database,
@@ -81,7 +82,8 @@ async def connect_to_mongo():
                 DealResult,
                 DealScrapeSchedule,
                 FacebookResult,
-                FacebookScrapeSchedule
+                FacebookScrapeSchedule,
+                UserPreference,
             ]
         )
 

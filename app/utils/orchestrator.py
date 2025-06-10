@@ -761,6 +761,7 @@ class ApolloOrchestrator:
 
                 self.publish_log(task_id, f"Preparing to download files for years: {list(year_data.keys())}", "info")
                 downloader = FileDownloader(
+                    metadata_dir=metadata_output_dir,
                     max_workers=MAX_DOWNLOAD_WORKERS,
                     timeout=CRAWLER_TIMEOUT
                 )
