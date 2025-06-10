@@ -32,6 +32,7 @@ class ClusterScraper:
         self.json_file_path = json_file_path
         self.output_dir = output_dir
         self.metadata_dir = metadata_dir
+        self.document_metadata_dir = os.path.join(self.metadata_dir, "files")
         self.expiry_days = expiry_days
         self.progress_update_interval = progress_update_interval
         self.max_workers = max_workers
@@ -354,7 +355,6 @@ class ClusterScraper:
             return 'website'
     
     def generate_checksum(self, content: str) -> str:
-        """Generate a SHA-256 checksum for the content"""
         try:
             hash_sha256 = hashlib.sha256()
             hash_sha256.update(content.encode('utf-8'))
@@ -372,22 +372,9 @@ class ClusterScraper:
         content: str, 
         expiry: Optional[str] = None
     ) -> str:
-        """
-        Create a metadata file with document information
 
-        Args:
-            metadata_dir (str): Directory to save the metadata file
-            filename_base (str): Base filename (without extension)
-            document_name (str): Name/title of the document
-            url (str): URL of the document
-            content (str): Content of the document for generating checksum
-            expiry (str, optional): Expiry date if set
-
-        Returns:
-            str: Path to the created metadata file
-        """
         try:
-            os.makedirs(metadata_dir, exist_ok=True)
+            os.makedirs(self.document_metadata_dir, exist_ok=True)
 
             source = self.determine_source_from_url(url)
             checksum = self.generate_checksum(content)
@@ -400,7 +387,7 @@ class ClusterScraper:
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
 
-            metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
+            metadata_file_path = os.path.join(self.document_metadata_dir, f"{filename_base}.meta")
             with open(metadata_file_path, "w", encoding="utf-8") as f:
                 f.write(metadata_content)
 
@@ -549,6 +536,7 @@ class ClusterScraper:
         self.publish_progress(force=True)
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.metadata_dir, exist_ok=True)
+        os.makedirs(self.document_metadata_dir, exist_ok=True)
         expiry_date = None
         if self.expiry_days is not None:
             expiry_date = (datetime.now() + timedelta(days=self.expiry_days)).strftime('%Y-%m-%d')

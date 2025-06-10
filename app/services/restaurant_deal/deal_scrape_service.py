@@ -27,7 +27,6 @@ class DealScrapperService:
         max_workers: int = 20,
         request_delay: float = 0.5,
         progress_update_interval: int = 5,
-        metadata_dir: str = "peekaboo_metadata"
     ):
 
         self.logger = self._setup_logger()
@@ -38,7 +37,6 @@ class DealScrapperService:
         self.max_workers = max_workers
         self.request_delay = request_delay
         self.progress_update_interval = progress_update_interval
-        self.metadata_dir = metadata_dir
         self.status = "initialized"
         self.progress = 0.0
         self.start_time = 0.0
@@ -60,7 +58,7 @@ class DealScrapperService:
         self.progress_callback = None
         self._create_directory_structure()
         
-        self.logger.info(f"DealScrapperService initialized with output_dir={output_dir}, max_workers={max_workers}, metadata_dir={metadata_dir}")
+        self.logger.info(f"DealScrapperService initialized with output_dir={output_dir}, max_workers={max_workers}, metadata_dir=metadata")
     
     def _create_directory_structure(self):
         try:
@@ -69,7 +67,8 @@ class DealScrapperService:
             subdirs = [
                 "markdown_files",
                 "json_data", 
-                "city_summaries"
+                "city_summaries",
+                "metadata",
             ]
             
             for subdir in subdirs:
@@ -342,7 +341,6 @@ class DealScrapperService:
             return []
     
     def generate_content_checksum(self, content: str) -> str:
-        """Generate a SHA-256 checksum for the content"""
         try:
             hash_sha256 = hashlib.sha256()
             hash_sha256.update(content.encode('utf-8'))
@@ -352,7 +350,6 @@ class DealScrapperService:
             return "checksum_error"
 
     def extract_expiry_from_deals(self, deals_data: list) -> Optional[str]:
-        """Extract the earliest expiry date from deals data"""
         expiry_dates = []
 
         for deal in deals_data:
@@ -360,7 +357,7 @@ class DealScrapperService:
             if end_date:
                 try:
                     if isinstance(end_date, str):
-                        date_str = end_date.split('T')[0]  # Remove time part if present
+                        date_str = end_date.split('T')[0]  
                         expiry_dates.append(date_str)
                 except Exception as e:
                     self.logger.debug(f"Error parsing date {end_date}: {e}")
@@ -374,20 +371,16 @@ class DealScrapperService:
     def create_metadata_file(self, filename_base: str, city: str,
                            deals_content: str, expiry_date: Optional[str] = None,
                            file_path: Optional[str] = None) -> str:
-        """Create a metadata file with Peekaboo deals information"""
         try:
-            os.makedirs(self.metadata_dir, exist_ok=True)
+            metadata_dir = os.path.join(self.output_dir, "metadata")
+            os.makedirs(metadata_dir, exist_ok=True)
 
-            # Generate unique document ID
             document_id = str(uuid.uuid4())
 
-            # Generate checksum of deals content
             checksum = self.generate_content_checksum(deals_content)
 
-            # Create document URL
             document_url = f"peekaboo://deals/{city}" if city else "peekaboo://deals/unknown"
 
-            # Build metadata content
             metadata_content = f"document id: {document_id}\n"
             metadata_content += f"document name: Peekaboo Deals - {city}\n"
             metadata_content += f"document url: {document_url}\n"
@@ -395,8 +388,7 @@ class DealScrapperService:
             metadata_content += f"source: peekaboo\n"
             metadata_content += f"checksum: {checksum}\n"
 
-            # Save metadata file
-            metadata_file_path = os.path.join(self.metadata_dir, f"{filename_base}.meta")
+            metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
             with open(metadata_file_path, "w", encoding="utf-8") as f:
                 f.write(metadata_content)
 
@@ -410,7 +402,6 @@ class DealScrapperService:
         markdown_dir = os.path.join(self.output_dir, "markdown_files")
         file_path = os.path.join(markdown_dir, f"{self.sanitize_filename(city)}_deals.md")
 
-        # Build the markdown content
         markdown_content = f"# Restaurant Deals in {city}\n\n"
         markdown_content += f"*Last updated: {time.strftime('%Y-%m-%d %H:%M:%S')} (PKT)*\n\n"
 
@@ -448,19 +439,15 @@ class DealScrapperService:
                         markdown_content += f"- **Associations:** {', '.join(deal['associations'])}\n"
                     markdown_content += "\n---\n\n"
 
-        # Write the markdown file
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(markdown_content)
 
-        # Collect all deals for expiry date extraction
         all_deals = []
         for deals_list in restaurants_deals.values():
             all_deals.extend(deals_list)
 
-        # Extract earliest expiry date
         expiry_date = self.extract_expiry_from_deals(all_deals)
 
-        # Generate metadata file
         filename_base = f"{self.sanitize_filename(city)}_deals"
         self.create_metadata_file(
             filename_base=filename_base,
@@ -704,7 +691,7 @@ class DealScrapperService:
                     "total_restaurants": self.restaurants_processed,
                     "total_deals": self.deals_found,
                     "execution_time_seconds": time.time() - self.start_time,
-                    "metadata_directory": self.metadata_dir
+                    "metadata_directory": os.path.join(self.output_dir, "metadata")
                 },
                 "city_breakdown": {}
             }
@@ -729,7 +716,7 @@ class DealScrapperService:
                 f.write(f"- **Total Restaurants:** {self.restaurants_processed}\n")
                 f.write(f"- **Total Deals Found:** {self.deals_found}\n")
                 f.write(f"- **Execution Time:** {(time.time() - self.start_time):.2f} seconds\n")
-                f.write(f"- **Metadata Directory:** {self.metadata_dir}\n\n")
+                f.write(f"- **Metadata Directory:** {os.path.join(self.output_dir, 'metadata')}\n\n")
                 
                 f.write("## City Breakdown\n\n")
                 f.write("| City | Restaurants | Deals |\n")

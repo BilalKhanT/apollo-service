@@ -65,6 +65,8 @@ class FileDownloader:
         self.results_lock = threading.Lock()
         
         os.makedirs(self.metadata_dir, exist_ok=True)
+        self.files_metadata_dir = os.path.join(self.metadata_dir, "document")
+        os.makedirs(self.files_metadata_dir, exist_ok=True)
         self.logger.info(f"FileDownloader initialized with {max_workers} workers, {timeout}s timeout, batch_size={batch_size}, metadata_dir={metadata_dir}")
     
     def _setup_logger(self):
@@ -220,9 +222,8 @@ class FileDownloader:
 
     def create_metadata_file(self, filename_base: str, document_name: str, url: str, 
                            file_path: str, expiry: Optional[str] = None) -> str:
-        """Create a metadata file with document information"""
         try:
-            os.makedirs(self.metadata_dir, exist_ok=True)
+            os.makedirs(self.files_metadata_dir, exist_ok=True)
 
             source = self.determine_source_from_url(url)
             checksum = self.generate_checksum(file_path)
@@ -235,7 +236,7 @@ class FileDownloader:
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
 
-            metadata_file_path = os.path.join(self.metadata_dir, f"{filename_base}.meta")
+            metadata_file_path = os.path.join(self.files_metadata_dir, f"{filename_base}.meta")
             with open(metadata_file_path, "w", encoding="utf-8") as f:
                 f.write(metadata_content)
 
