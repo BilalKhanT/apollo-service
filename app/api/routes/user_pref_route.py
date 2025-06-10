@@ -58,7 +58,7 @@ async def save_user_preference(request: UserPreferenceRequest) -> UserPreference
         )
 
 @router.get(
-    "/{userid}",
+    "/",
     response_model=UserPreferenceDataResponse,
     responses={
         200: {
@@ -77,14 +77,14 @@ async def save_user_preference(request: UserPreferenceRequest) -> UserPreference
     summary="Get user preference",
     description="Retrieve user's saved clusters and years selection."
 )
-async def get_user_preference(userid: str) -> UserPreferenceDataResponse:
+async def get_user_preference() -> UserPreferenceDataResponse:
     try:
-        preference = await UserPreferenceController.get_user_preference(userid)
+        preference = await UserPreferenceController.get_user_preference()
         
         if not preference:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No preference found for user: {userid}"
+                detail=f"No preference found for user"
             )
         
         return UserPreferenceDataResponse(
