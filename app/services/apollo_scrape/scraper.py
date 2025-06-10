@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 import time
 import hashlib
+import uuid
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import logging
@@ -31,6 +32,7 @@ class ClusterScraper:
         self.json_file_path = json_file_path
         self.output_dir = output_dir
         self.metadata_dir = metadata_dir
+        self.document_metadata_dir = os.path.join(self.metadata_dir, "files")
         self.expiry_days = expiry_days
         self.progress_update_interval = progress_update_interval
         self.max_workers = max_workers
@@ -343,6 +345,7 @@ class ClusterScraper:
             return "", "", ""
     
     def determine_source_from_url(self, url: str) -> str:
+        """Determine the source type based on the URL"""
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
@@ -351,8 +354,14 @@ class ClusterScraper:
         else:
             return 'website'
     
-    def generate_document_id(self, content: str) -> str:
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    def generate_checksum(self, content: str) -> str:
+        try:
+            hash_sha256 = hashlib.sha256()
+            hash_sha256.update(content.encode('utf-8'))
+            return hash_sha256.hexdigest()
+        except Exception as e:
+            self.logger.error(f"Error generating checksum: {e}")
+            return "checksum_error"
     
     def create_metadata_file(
         self, 
@@ -362,23 +371,31 @@ class ClusterScraper:
         url: str, 
         content: str, 
         expiry: Optional[str] = None
-    ) -> None:
-        os.makedirs(metadata_dir, exist_ok=True)
-        
-        source = self.determine_source_from_url(url)
-        document_id = self.generate_document_id(content)
-        
-        metadata_content = f"document name: {document_name}\n"
-        metadata_content += f"document url: {url}\n"
-        metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
-        metadata_content += f"source: {source}\n"
-        metadata_content += f"document_id: {document_id}\n"
-        
-        metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
-        with open(metadata_file_path, "w", encoding="utf-8") as f:
-            f.write(metadata_content)
-        
-        self.logger.debug(f"Metadata saved to: {metadata_file_path}")
+    ) -> str:
+
+        try:
+            os.makedirs(self.document_metadata_dir, exist_ok=True)
+
+            source = self.determine_source_from_url(url)
+            checksum = self.generate_checksum(content)
+            document_id = str(uuid.uuid4())
+
+            metadata_content = f"document id: {document_id}\n"
+            metadata_content += f"document name: {document_name}\n"
+            metadata_content += f"document url: {url}\n"
+            metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
+            metadata_content += f"source: {source}\n"
+            metadata_content += f"checksum: {checksum}\n"
+
+            metadata_file_path = os.path.join(self.document_metadata_dir, f"{filename_base}.meta")
+            with open(metadata_file_path, "w", encoding="utf-8") as f:
+                f.write(metadata_content)
+
+            self.logger.info(f"Metadata saved to: {metadata_file_path}")
+            return metadata_file_path
+        except Exception as e:
+            self.logger.error(f"Error creating metadata file: {str(e)}")
+            return ""
     
     def url_to_directory_path(self, url: str) -> str:
         parsed_url = url.split("://", 1)
@@ -519,6 +536,7 @@ class ClusterScraper:
         self.publish_progress(force=True)
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.metadata_dir, exist_ok=True)
+        os.makedirs(self.document_metadata_dir, exist_ok=True)
         expiry_date = None
         if self.expiry_days is not None:
             expiry_date = (datetime.now() + timedelta(days=self.expiry_days)).strftime('%Y-%m-%d')
