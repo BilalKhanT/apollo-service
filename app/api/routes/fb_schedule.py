@@ -8,6 +8,7 @@ from app.models.fb_scrape.fb_scrape_schedule_model import (
     FBScheduleResponse, 
     FBScheduleListResponse,
     FBScheduleActionResponse,
+    FBScheduleUpdateRequest,
     ScheduleStatus
 )
 from app.models.base import ErrorResponse
@@ -57,6 +58,51 @@ async def create_or_update_facebook_schedule(request: FBScheduleRequest) -> FBSc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create/update Facebook schedule: {str(e)}"
+        )
+    
+@router.put(
+    "/{schedule_id}",
+    response_model=FBScheduleResponse,
+    responses={
+        200: {
+            "description": "Facebook schedule updated successfully",
+            "model": FBScheduleResponse
+        },
+        404: {
+            "description": "Schedule not found",
+            "model": ErrorResponse
+        },
+        400: {
+            "description": "Invalid request parameters",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Update a Facebook schedule",
+    description="Update specific fields of an existing Facebook scraping schedule."
+)
+async def update_facebook_schedule(
+    schedule_id: str, 
+    request: FBScheduleUpdateRequest
+) -> FBScheduleResponse:
+    try:
+        return await FBScheduleController.update_schedule(schedule_id, request)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error updating Facebook schedule: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid request parameters: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error updating Facebook schedule {schedule_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update Facebook schedule: {str(e)}"
         )
 
 @router.get(

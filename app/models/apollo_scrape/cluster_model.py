@@ -9,7 +9,7 @@ class Cluster(BaseModel):
     urls: Optional[List[str]] = Field(default=None, description="List of URLs in this cluster")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "1.1",
                 "path": "/products",
@@ -28,7 +28,7 @@ class DomainCluster(BaseModel):
     clusters: List[Cluster] = Field(description="List of path-based clusters within this domain")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "1",
                 "domain": "example.com",
@@ -50,7 +50,7 @@ class YearCluster(BaseModel):
     files: List[str] = Field(description="List of file URLs for this year")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "year": "2024",
                 "files_count": 45,
@@ -67,7 +67,7 @@ class ClusterSummary(BaseModel):
     total_urls: int = Field(description="Total number of URLs clustered", example=1250)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "total_domains": 3,
                 "total_clusters": 15,
@@ -80,7 +80,7 @@ class ClusterResult(BaseModel):
     clusters: Dict[str, DomainCluster] = Field(description="Domain-based clusters")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "summary": {
                     "total_domains": 3,
@@ -107,7 +107,7 @@ class ClusterDetailResponse(BaseModel):
     clusters: Optional[List[Cluster]] = Field(default=None, description="Sub-clusters if this is a domain cluster")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "1.1",
                 "name": "example.com - /products",
@@ -127,7 +127,7 @@ class YearDetailResponse(BaseModel):
     files: List[str] = Field(description="List of file URLs")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "year": "2024",
                 "files_count": 45,
@@ -147,7 +147,7 @@ class ClustersListResponse(BaseResponse):
     years_error: Optional[str] = Field(default=None, description="Error message for years")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Clusters and years retrieved successfully",

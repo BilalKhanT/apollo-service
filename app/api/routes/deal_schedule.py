@@ -8,6 +8,7 @@ from app.models.restaurant_deal.deal_schedule_model import (
     DealScheduleResponse, 
     DealScheduleListResponse,
     DealScheduleActionResponse,
+    DealScheduleUpdateRequest,
     ScheduleStatus
 )
 from app.models.base import ErrorResponse
@@ -57,6 +58,51 @@ async def create_or_update_deal_schedule(request: DealScheduleRequest) -> DealSc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create/update deal schedule: {str(e)}"
+        )
+    
+@router.put(
+    "/{schedule_id}",
+    response_model=DealScheduleResponse,
+    responses={
+        200: {
+            "description": "Deal schedule updated successfully",
+            "model": DealScheduleResponse
+        },
+        404: {
+            "description": "Schedule not found",
+            "model": ErrorResponse
+        },
+        400: {
+            "description": "Invalid request parameters",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Update a deal schedule",
+    description="Update specific fields of an existing deal scraping schedule."
+)
+async def update_deal_schedule(
+    schedule_id: str, 
+    request: DealScheduleUpdateRequest
+) -> DealScheduleResponse:
+    try:
+        return await DealScheduleController.update_schedule(schedule_id, request)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error updating deal schedule: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid request parameters: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error updating deal schedule {schedule_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update deal schedule: {str(e)}"
         )
 
 @router.get(

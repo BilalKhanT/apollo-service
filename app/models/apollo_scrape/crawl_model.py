@@ -50,7 +50,7 @@ class CrawlRequest(BaseModel):
         return v
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "base_url": "https://example.com",
                 "max_links_to_scrape": 1000,
@@ -96,7 +96,7 @@ class CrawlStatus(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
                 "status": "running", 
@@ -116,7 +116,7 @@ class CrawlResponse(DataResponse):
     data: CrawlStatus = Field(description="Crawl task status information")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Crawl task started successfully",
@@ -145,7 +145,7 @@ class CrawlStopRequest(BaseModel):
     )
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "force": False
             }
@@ -156,7 +156,7 @@ class CrawlStopResponse(BaseResponse):
     cleanup_completed: bool = Field(description="Whether cleanup was completed", example=True)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Crawler stopped gracefully",

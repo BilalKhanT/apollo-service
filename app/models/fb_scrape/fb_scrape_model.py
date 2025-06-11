@@ -1,4 +1,4 @@
-from pydantic import BaseModel, validator, Field  # Fixed import
+from pydantic import BaseModel, validator, Field  
 from datetime import datetime
 from typing import Dict, List
 from app.models.base import BaseResponse
@@ -12,7 +12,6 @@ class FacebookScrapingRequest(BaseModel):
     def validate_keywords(cls, v):
         if not v:
             raise ValueError('At least one keyword must be provided')
-        # Clean and validate keywords
         cleaned_keywords = []
         for keyword in v:
             if keyword and keyword.strip():

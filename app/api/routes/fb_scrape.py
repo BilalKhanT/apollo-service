@@ -46,8 +46,8 @@ async def start_facebook_scraping(
         task_info = await FacebookScrapeController.start_facebook_scraping(
             keywords=request.keywords,
             days=request.days,
-            access_token="EAANwmjYfSZAMBO9my96Ipmky8pZCHEkDOu5eXZAaHc7ge2LZCZCsZBz7yoj7O5mfZCHlTLVey0RbZBIUgQTpkqH7goqwQLTw0kWAw4GMaiOh36qIh3jYDX6KYfOqMBVjZBChSlCLNmljS4dswIB9sZCNvQZCXZC3xlMJ9FLDLUyT0dzd9XQBG5nHv4FPSW5hkr8Kt9eO",
-            page_id="185182871519466"
+            # access_token="EAANwmjYfSZAMBO9my96Ipmky8pZCHEkDOu5eXZAaHc7ge2LZCZCsZBz7yoj7O5mfZCHlTLVey0RbZBIUgQTpkqH7goqwQLTw0kWAw4GMaiOh36qIh3jYDX6KYfOqMBVjZBChSlCLNmljS4dswIB9sZCNvQZCXZC3xlMJ9FLDLUyT0dzd9XQBG5nHv4FPSW5hkr8Kt9eO",
+            # page_id="185182871519466"
         )
         
         background_tasks.add_task(
@@ -55,8 +55,8 @@ async def start_facebook_scraping(
             task_id=task_info["task_id"],
             keywords=request.keywords,
             days=request.days,
-            access_token="EAANwmjYfSZAMBO9my96Ipmky8pZCHEkDOu5eXZAaHc7ge2LZCZCsZBz7yoj7O5mfZCHlTLVey0RbZBIUgQTpkqH7goqwQLTw0kWAw4GMaiOh36qIh3jYDX6KYfOqMBVjZBChSlCLNmljS4dswIB9sZCNvQZCXZC3xlMJ9FLDLUyT0dzd9XQBG5nHv4FPSW5hkr8Kt9eO",
-            page_id="185182871519466"
+            # access_token="EAANwmjYfSZAMBO9my96Ipmky8pZCHEkDOu5eXZAaHc7ge2LZCZCsZBz7yoj7O5mfZCHlTLVey0RbZBIUgQTpkqH7goqwQLTw0kWAw4GMaiOh36qIh3jYDX6KYfOqMBVjZBChSlCLNmljS4dswIB9sZCNvQZCXZC3xlMJ9FLDLUyT0dzd9XQBG5nHv4FPSW5hkr8Kt9eO",
+            # page_id="185182871519466"
         )
         
         return FacebookScrapingResponse(
@@ -86,16 +86,16 @@ async def run_facebook_scraping_background(
     task_id: str,
     keywords: List[str],
     days: int,
-    access_token: str,
-    page_id: str
+    # access_token: str,
+    # page_id: str
 ):
     try:
         await orchestrator.run_facebook_scraping(
             task_id=task_id,
             keywords=keywords,
             days=days,
-            access_token=access_token,
-            page_id=page_id
+            # access_token=access_token,
+            # page_id=page_id
         )
     except Exception as e:
         logger.error(f"Error in background Facebook scraping task {task_id}: {str(e)}")

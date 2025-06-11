@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
-from typing import Optional
+from typing import Dict, List, Optional
 import logging
 from app.models.apollo_scrape.scrape_model import (
     ScrapingRequest, 
@@ -49,16 +49,16 @@ async def start_scrape(
 ) -> ScrapingResponse:
     try:
         scrape_status = await ScrapeController.start_scrape(
-            cluster_ids=request.cluster_ids,
-            years=request.years,
+            cluster_data=request.cluster_ids,  
+            year_data=request.years,          
             crawl_task_id=crawl_task_id or request.crawl_task_id
         )
 
         background_tasks.add_task(
             run_scrape_background,
             task_id=scrape_status.id,
-            cluster_ids=request.cluster_ids,
-            years=request.years,
+            cluster_data=request.cluster_ids, 
+            year_data=request.years,          
             crawl_task_id=crawl_task_id or request.crawl_task_id
         )
         
@@ -85,15 +85,15 @@ async def start_scrape(
 
 async def run_scrape_background(
     task_id: str,
-    cluster_ids: list,
-    years: list = None,
+    cluster_data: Dict[str, List[str]], 
+    year_data: Dict[str, List[str]] = None,  
     crawl_task_id: str = None
 ):
     try:
         await orchestrator.run_scrape_download(
             task_id=task_id,
-            cluster_ids=cluster_ids,
-            years=years,
+            cluster_data=cluster_data,  
+            year_data=year_data,       
             crawl_task_id=crawl_task_id
         )
     except Exception as e:

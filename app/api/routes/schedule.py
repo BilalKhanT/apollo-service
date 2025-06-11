@@ -5,7 +5,8 @@ import logging
 
 from app.models.apollo_scrape.schedule_model import (
     CrawlScheduleRequest, 
-    CrawlScheduleResponse, 
+    CrawlScheduleResponse,
+    CrawlScheduleUpdateRequest, 
     ScheduleListResponse,
     ScheduleActionResponse,
     ScheduleStatus
@@ -57,6 +58,51 @@ async def create_or_update_schedule(request: CrawlScheduleRequest) -> CrawlSched
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create/update schedule: {str(e)}"
+        )
+    
+@router.put(
+    "/{schedule_id}",
+    response_model=CrawlScheduleResponse,
+    responses={
+        200: {
+            "description": "Schedule updated successfully",
+            "model": CrawlScheduleResponse
+        },
+        404: {
+            "description": "Schedule not found",
+            "model": ErrorResponse
+        },
+        400: {
+            "description": "Invalid request parameters",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Update a crawl schedule",
+    description="Update specific fields of an existing crawl schedule."
+)
+async def update_schedule(
+    schedule_id: str, 
+    request: CrawlScheduleUpdateRequest
+) -> CrawlScheduleResponse:
+    try:
+        return await ScheduleController.update_schedule(schedule_id, request)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error updating schedule: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid request parameters: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error updating schedule {schedule_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update schedule: {str(e)}"
         )
 
 @router.get(

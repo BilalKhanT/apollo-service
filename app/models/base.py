@@ -29,7 +29,7 @@ class BaseResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Operation completed successfully",
@@ -41,7 +41,7 @@ class DataResponse(BaseResponse):
     data: Any = Field(description="Response data payload")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Data retrieved successfully",
@@ -57,7 +57,7 @@ class ListResponse(BaseResponse):
     page_size: int = Field(default=50, description="Number of items per page")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Items retrieved successfully",
@@ -77,7 +77,7 @@ class ErrorResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": False,
                 "error": "Task not found",
@@ -95,7 +95,7 @@ class HealthResponse(BaseModel):
     websocket: Dict[str, Any] = Field(description="WebSocket service status")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "status": "healthy",
                 "version": "2.2.0",

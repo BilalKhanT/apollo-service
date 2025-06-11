@@ -45,7 +45,7 @@ class CrawlScheduleRequest(BaseModel):
     
     class Config:
         use_enum_values = True
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "base_url": "https://example.com",
                 "schedule_name": "Daily Example Crawl",
@@ -86,7 +86,7 @@ class CrawlScheduleResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "789e0123-e89b-12d3-a456-426614174000",
                 "base_url": "https://example.com",
@@ -134,7 +134,7 @@ class CrawlScheduleUpdateRequest(BaseModel):
     
     class Config:
         use_enum_values = True
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "schedule_name": "Updated Daily Crawl",
                 "day_of_week": "tuesday",
@@ -148,7 +148,7 @@ class ScheduleListResponse(BaseResponse):
     total_count: int = Field(description="Total number of schedules", example=5)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Schedules retrieved successfully",
@@ -186,7 +186,7 @@ class ScheduleStatusResponse(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": "789e0123-e89b-12d3-a456-426614174000",
                 "status": "active",
@@ -205,7 +205,7 @@ class ScheduleActionResponse(BaseResponse):
     action: str = Field(description="Action that was performed", example="paused")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "success": True,
                 "message": "Schedule paused successfully",

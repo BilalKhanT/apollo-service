@@ -5,7 +5,8 @@ import logging
 from app.models.database.apollo_scraper.crawl_schedule_model import CrawlSchedule, ScheduleStatus
 from app.models.apollo_scrape.schedule_model import (
     CrawlScheduleRequest, 
-    CrawlScheduleResponse, 
+    CrawlScheduleResponse,
+    CrawlScheduleUpdateRequest, 
     ScheduleListResponse,
     ScheduleStatusResponse
 )
@@ -88,6 +89,80 @@ class ScheduleController:
             raise HTTPException(
                 status_code=500, 
                 detail=f"Failed to create/update schedule: {str(e)}"
+            )
+        
+    @staticmethod
+    async def update_schedule(schedule_id: str, request: CrawlScheduleUpdateRequest) -> CrawlScheduleResponse:
+        try:
+            schedule = await CrawlSchedule.get(schedule_id)
+            if not schedule:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Schedule {schedule_id} not found"
+                )
+
+            timing_changed = False
+
+            if request.schedule_name is not None:
+                schedule.schedule_name = request.schedule_name
+            if request.day_of_week is not None:
+                schedule.day_of_week = request.day_of_week
+                timing_changed = True
+            if request.time_of_day is not None:
+                schedule.time_of_day = request.time_of_day
+                timing_changed = True
+            if request.max_links_to_scrape is not None:
+                schedule.max_links_to_scrape = request.max_links_to_scrape
+            if request.max_pages_to_scrape is not None:
+                schedule.max_pages_to_scrape = request.max_pages_to_scrape
+            if request.depth_limit is not None:
+                schedule.depth_limit = request.depth_limit
+            if request.domain_restriction is not None:
+                schedule.domain_restriction = request.domain_restriction
+            if request.scrape_pdfs_and_xls is not None:
+                schedule.scrape_pdfs_and_xls = request.scrape_pdfs_and_xls
+            if request.status is not None:
+                schedule.status = request.status
+                timing_changed = True
+
+            if timing_changed and schedule.status == ScheduleStatus.ACTIVE:
+                schedule.next_run_at = schedule.calculate_next_run()
+            
+            schedule.update_timestamp()
+            await schedule.save()
+            
+            logger.info(f"Updated crawl schedule {schedule_id} for {schedule.base_url}")
+            
+            return CrawlScheduleResponse(
+                id=str(schedule.id),
+                base_url=schedule.base_url,
+                schedule_name=schedule.schedule_name,
+                day_of_week=schedule.day_of_week,
+                time_of_day=schedule.time_of_day,
+                max_links_to_scrape=schedule.max_links_to_scrape,
+                max_pages_to_scrape=schedule.max_pages_to_scrape,
+                depth_limit=schedule.depth_limit,
+                domain_restriction=schedule.domain_restriction,
+                scrape_pdfs_and_xls=schedule.scrape_pdfs_and_xls,
+                status=schedule.status,
+                created_at=schedule.created_at,
+                updated_at=schedule.updated_at,
+                last_run_at=schedule.last_run_at,
+                next_run_at=schedule.next_run_at,
+                total_runs=schedule.total_runs,
+                successful_runs=schedule.successful_runs,
+                failed_runs=schedule.failed_runs,
+                last_task_id=schedule.last_task_id,
+                last_error=schedule.last_error
+            )
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error updating schedule {schedule_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to update schedule: {str(e)}"
             )
     
     @staticmethod

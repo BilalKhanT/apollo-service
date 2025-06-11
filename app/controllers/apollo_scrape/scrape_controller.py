@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 from fastapi import HTTPException
 from app.utils.task_manager import task_manager
 from app.utils.realtime_publisher import realtime_publisher
@@ -10,53 +10,61 @@ logger = logging.getLogger(__name__)
 
 
 class ScrapeController:
+
     @staticmethod
     async def start_scrape(
-        cluster_ids: List[str],
-        years: List[str],
+        cluster_data: Dict[str, List[str]],  
+        year_data: Dict[str, List[str]],     
         crawl_task_id: Optional[str] = None
     ) -> ScrapingStatus:
+
+        if cluster_data:
+            for cluster_id, links in cluster_data.items():
+                if not cluster_id or not cluster_id.strip():
+                    raise HTTPException(status_code=400, detail="Cluster ID cannot be empty")
+                if not links or not all(isinstance(link, str) and link.strip() for link in links):
+                    raise HTTPException(status_code=400, detail=f"Invalid links for cluster {cluster_id}")
+
+        if year_data:
+            for year, links in year_data.items():
+                if year != "No Year" and (not year.isdigit() or len(year) != 4):
+                    raise HTTPException(status_code=400, detail=f"Invalid year format: {year}")
+                if not links or not all(isinstance(link, str) and link.strip() for link in links):
+                    raise HTTPException(status_code=400, detail=f"Invalid links for year {year}")
+
         if crawl_task_id:
             crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
             if not crawl_result:
                 raise HTTPException(status_code=404, detail=f"Crawl result for task {crawl_task_id} not found")
 
-            if cluster_ids and crawl_result.clusters:
+            if cluster_data and crawl_result.clusters:
                 available_cluster_ids = set()
                 for domain_data in crawl_result.clusters.values():
                     available_cluster_ids.add(domain_data.id)
                     for cluster in domain_data.clusters:
                         available_cluster_ids.add(cluster.id)
                 
-                invalid_clusters = [cid for cid in cluster_ids if cid not in available_cluster_ids]
+                invalid_clusters = [cid for cid in cluster_data.keys() if cid not in available_cluster_ids]
                 if invalid_clusters:
                     raise HTTPException(
                         status_code=400, 
                         detail=f"Invalid cluster IDs: {invalid_clusters}. Available clusters: {list(available_cluster_ids)}"
                     )
 
-            if years and crawl_result.yearclusters:
+            if year_data and crawl_result.yearclusters:
                 available_years = set(crawl_result.yearclusters.keys())
-                invalid_years = [year for year in years if year not in available_years]
+                invalid_years = [year for year in year_data.keys() if year not in available_years]
                 if invalid_years:
                     raise HTTPException(
                         status_code=400, 
                         detail=f"Invalid years: {invalid_years}. Available years: {list(available_years)}"
                     )
-        else:
-            crawl_results = await CrawlResultController.list_crawl_results()
-            if not crawl_results:
-                raise HTTPException(status_code=404, detail="No crawl results found in database")
-            
-            crawl_results.sort(key=lambda x: x.created_at, reverse=True)
-            crawl_result = crawl_results[0]
-            crawl_task_id = crawl_result.task_id
 
         task_id = task_manager.create_task(
             task_type="scrape",
             params={
-                "cluster_ids": cluster_ids,
-                "years": years,
+                "cluster_data": cluster_data,  
+                "year_data": year_data,        
                 "crawl_task_id": crawl_task_id
             }
         )

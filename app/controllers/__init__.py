@@ -7,6 +7,7 @@ from .apollo_scrape.schedule_controller import ScheduleController
 from .restaurant_deal.deal_scrape_controller import DealScrapeController
 from .restaurant_deal.deal_schedule_controller import DealScheduleController
 from .fb_scrape.fb_scrape_controller import FacebookScrapeController
+from .apollo_scrape.user_pref_controller import UserPreferenceController
 
 __all__ = [
     'CrawlController',
@@ -18,4 +19,5 @@ __all__ = [
     'DealScrapeController',
     'DealScheduleController',
     'FacebookScrapeController',
+    'UserPreferenceController',
 ]
