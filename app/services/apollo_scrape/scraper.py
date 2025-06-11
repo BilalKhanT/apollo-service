@@ -14,6 +14,7 @@ import traceback
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Tuple, Callable
+from app.utils.config import TAGS_TO_REMOVE, CLASSES_TO_REMOVE, DETECTED_BANK_NAME
 
 class ClusterScraper:
     
@@ -54,7 +55,15 @@ class ClusterScraper:
         self.task_manager = None
         self.progress_callback = None
         
+        # Load HTML cleanup configuration
+        self.tags_to_remove = TAGS_TO_REMOVE
+        self.classes_to_remove = CLASSES_TO_REMOVE
+        self.bank_name = DETECTED_BANK_NAME
+        
         self.logger.info(f"ClusterScraper initialized with output_dir={output_dir}, metadata_dir={metadata_dir}, max_workers={max_workers}, min_content_chars={min_content_chars}")
+        self.logger.info(f"Using cleanup config for bank: {self.bank_name}")
+        self.logger.info(f"Tags to remove: {len(self.tags_to_remove)} tags")
+        self.logger.info(f"Classes to remove: {len(self.classes_to_remove)} classes")
     
     def _setup_logger(self):
         logger = logging.getLogger("ClusterScraper")
@@ -240,28 +249,19 @@ class ClusterScraper:
         try:
             soup = BeautifulSoup(html, 'html.parser')
 
-            # # # UBL
-            # for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
-            # class_=['mobile-login-field-small-wrapper','sub-page-links-wrapper','header-main-subpages','related-links-wrapper','content-wrapper','mobile-header-main', 'mm-header-nav-links','top-bar','login-field-small-wrapper-subpages','form-small-wrapper','side-nav-inner-page','footer-wrapper','mobile-copyrights-wrapper','privacy-links-wrapper','bread-crums-wrapper','dcp-form']):
-            #     tag.decompose()
+            self.logger.debug(f"Removing tags: {self.tags_to_remove}")
+            self.logger.debug(f"Removing classes: {self.classes_to_remove}")
 
-
-
-            # # FBL
-            for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div', 'button','a','section','p','span','strong','italic'],
-            class_=['top-header','desk-header','mobile-header','breadcrumbs-bx','top-footer','middle-footer fb-footer','lowerfooter','nav-link','standard-btn mt-3','tab-sec-1 alpha importent-sec','apply-now-sec tab-sec-2 applyNow-gap','nectar-skip-to-content','small-nav','col span_9 col_last','inner-wrap','col span_12','a7c1dd3e','screen-reader-text','latest-offer-tab']):
-                tag.decompose()
-
-            # #BAFL
-            # for tag in soup.find_all(['header', 'footer', 'nav', 'aside', 'script', 'style', 'div'],
-            # class_=['col-lg-2 col-md-2 col-xs-2 col-sm-2 no-padding headerDiv','morph-menu-wrapper','phNumber',
-            #         'show-on-hover topBarMenu portal-button','menu-premier-quick-links-container','mobile-nav','quickContact paddingSidemenuDefault',
-            #         'pum-container popmake theme-2087406 pum-responsive pum-responsive-small responsive size-small',
-            #         'pum-container popmake theme-2087405 pum-responsive pum-responsive-medium responsive size-medium',
-            #         'pum-content popmake-content',' col-sm-10 no-padding classForRes','fontEm13 normalFont marginTop0',
-            #         'col-sm-10 no-padding','countrySelect clearfix','col-sm-2 no-padding',' col-sm-10 no-padding classForRes'
-            # ]):
-                # tag.decompose()
+            if self.tags_to_remove and self.classes_to_remove:
+                for tag in soup.find_all(self.tags_to_remove, class_=self.classes_to_remove):
+                    tag.decompose()
+            elif self.tags_to_remove:
+                for tag in soup.find_all(self.tags_to_remove):
+                    tag.decompose()
+            elif self.classes_to_remove:
+                for class_name in self.classes_to_remove:
+                    for tag in soup.find_all(class_=class_name):
+                        tag.decompose()
 
             for img in soup.find_all('img'):
                 img.decompose()
@@ -272,7 +272,6 @@ class ClusterScraper:
             for picture in soup.find_all('picture'):
                 picture.decompose()
 
-            # for UBL comment out this
             for form in soup.find_all('form'):
                 form.decompose()
 
@@ -298,16 +297,13 @@ class ClusterScraper:
                                 elem.decompose()
                         heading.decompose()
 
-                    # Also specifically remove the "btm-apply-form" section
                     for form_section in soup.find_all('section', id='btm-apply-form'):
                         form_section.decompose()
 
-            # Replace <a> tags with their text (remove links but keep text)
             for a in soup.find_all('a'):
                 a.replace_with(a.get_text())
 
-            # #FBL
-            content = soup.find_all(['article', 'section', 'main', 'div', 'main id', 'p', 'span', 'button'], class_=[])
+            content = self._extract_content_by_bank(soup)
             
             if not content:
                 content = soup.body
@@ -344,8 +340,24 @@ class ClusterScraper:
             self.logger.error(traceback.format_exc())
             return "", "", ""
     
+    def _extract_content_by_bank(self, soup: BeautifulSoup) -> Any:
+        try:
+            if self.bank_name == 'FBL':
+                content = soup.find_all(['article', 'section', 'main', 'div', 'main id', 'p', 'span', 'button'], class_=[])
+            elif self.bank_name == 'UBL':
+                content = soup.find_all(['article', 'section', 'main', 'div'])
+            elif self.bank_name == 'BAFL':
+                content = soup.find_all(['article', 'section', 'main', 'div'])
+            else:
+                content = soup.find_all(['article', 'section', 'main', 'div'])
+            
+            return content
+            
+        except Exception as e:
+            self.logger.warning(f"Error in bank-specific content extraction: {str(e)}")
+            return soup.find_all(['article', 'section', 'main', 'div'])
+    
     def determine_source_from_url(self, url: str) -> str:
-        """Determine the source type based on the URL"""
         parsed_url = urlparse(url)
         domain = parsed_url.netloc.lower()
         
