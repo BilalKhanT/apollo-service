@@ -485,7 +485,181 @@ class FileDownloader:
                 
                 self.files_processed += 1
                 self.publish_progress()
-    
+
+    # =============================================
+    # NEW SIMPLIFIED METHOD - DIRECT YEAR DATA
+    # =============================================
+    def download_files_direct(
+        self,
+        year_data: Dict[str, List[str]],  # SIMPLIFIED: Direct year data input
+        base_folder: str = "downloads",
+        task_id: Optional[str] = None,
+        callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    ) -> Dict[str, Any]:
+        """
+        SIMPLIFIED METHOD: Directly takes year_data as Dict[str, List[str]]
+        No more JSON files, no more complex processing - just pure downloading
+        """
+        if task_id:
+            self.set_task_id(task_id)
+        
+        if callback:
+            self.set_progress_callback(callback)
+
+        self.start_time = time.time()
+        self.status = "initializing"
+        self.progress = 65.0  # Download phase starts at 65%
+        self.files_downloaded = 0
+        self.files_failed = 0
+        self.files_processed = 0
+        self.total_files = 0
+        self.error = None
+        self.results = {
+            "status": "success",
+            "total": 0,
+            "successful": 0,
+            "failed": 0,
+            "by_year": {},
+            "execution_time_seconds": 0,
+            "metadata_directory": self.metadata_dir
+        }
+
+        self.session_pool = [self.create_new_session() for _ in range(self.max_workers * 2)]
+        
+        self.publish_progress(force=True)
+        
+        try:
+            os.makedirs(base_folder, exist_ok=True)
+            os.makedirs(self.metadata_dir, exist_ok=True)
+            self.logger.info(f"Created base folder: {base_folder}")
+            self.logger.info(f"Created metadata directory: {self.metadata_dir}")
+
+            # Validate and count files directly from year_data
+            self.status = "counting_files"
+            self.publish_progress(force=True)
+
+            valid_years = []
+            for year, urls in year_data.items():
+                if urls and isinstance(urls, list):
+                    valid_urls = [url for url in urls if url and isinstance(url, str) and url.strip()]
+                    if valid_urls:
+                        self.total_files += len(valid_urls)
+                        valid_years.append((year, valid_urls))
+                        self.logger.info(f"Year '{year}': {len(valid_urls)} files to download")
+                    else:
+                        self.logger.warning(f"Year '{year}' has no valid URLs - skipping")
+                else:
+                    self.logger.warning(f"Year '{year}' has invalid URL list - skipping")
+            
+            self.results["total"] = self.total_files
+            
+            if self.total_files == 0:
+                self.logger.warning("No files found to download in the specified years")
+                self.status = "completed"
+                self.progress = 90.0
+                self.publish_progress(force=True)
+                
+                return {
+                    "status": "completed",
+                    "successful": 0,
+                    "failed": 0,
+                    "total": 0,
+                    "execution_time_seconds": time.time() - self.start_time
+                }
+            
+            self.logger.info(f"Found {self.total_files} files to download across {len(valid_years)} years")
+
+            self.status = "downloading"
+            self.publish_progress(force=True)
+
+            # Create year folders
+            for year, urls in valid_years:
+                year_folder = os.path.join(base_folder, str(year))
+                self.ensure_folder_exists(year_folder)
+                self.logger.info(f"Created year folder: {year_folder}")
+
+            # Prepare all download tasks
+            all_tasks = []
+            for year, urls in valid_years:
+                year_folder = os.path.join(base_folder, str(year))
+                for url in urls:
+                    all_tasks.append((url, year_folder, year))
+
+            # Execute downloads in parallel with batching
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                for i in range(0, len(all_tasks), self.batch_size):
+                    batch = all_tasks[i:i+self.batch_size]
+
+                    futures_dict = {
+                        executor.submit(self._download_file, url, folder, year): (url, folder, year)
+                        for url, folder, year in batch
+                    }
+
+                    for future in as_completed(futures_dict):
+                        url, folder, year = futures_dict[future]
+                        
+                        try:
+                            result = future.result()
+                            self.update_results(result)
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error processing result for {url}: {str(e)}")
+                            self.logger.error(traceback.format_exc())
+
+                            error_result = {
+                                "url": url,
+                                "success": False,
+                                "file_path": None,
+                                "message": f"Error in thread execution: {str(e)}",
+                                "status_code": 0,
+                                "year": year
+                            }
+
+                            self.update_results(error_result)
+
+            execution_time = time.time() - self.start_time
+            self.results["execution_time_seconds"] = execution_time
+
+            self.status = "completed"
+            self.progress = 90.0  # Download phase completes at 90%
+            self.publish_progress(force=True)
+            
+            self.logger.info(
+                f"Download summary: {self.results['successful']} successful, "
+                f"{self.results['failed']} failed out of {self.results['total']} total files. "
+                f"Completed in {execution_time:.2f} seconds."
+            )
+            
+            return self.results
+            
+        except Exception as e:
+            error_msg = f"Error in download_files_direct: {str(e)}"
+            self.logger.error(error_msg)
+            self.logger.error(traceback.format_exc())
+            self.status = "failed"
+            self.error = error_msg
+            self.publish_progress(force=True)
+            
+            return {
+                "status": "failed",
+                "error": error_msg,
+                "successful": self.files_downloaded,
+                "failed": self.files_failed,
+                "total": self.total_files,
+                "execution_time_seconds": time.time() - self.start_time
+            }
+        finally:
+            # Clean up session pool
+            for session in self.session_pool:
+                try:
+                    session.close()
+                except:
+                    pass
+            self.session_pool = []
+
+    # =============================================
+    # KEEP ORIGINAL METHOD FOR BACKWARD COMPATIBILITY
+    # =============================================
     def download_files_by_year(
         self,
         json_file: str,
@@ -494,7 +668,10 @@ class FileDownloader:
         task_id: Optional[str] = None,
         callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> Dict[str, Any]:
-
+        """
+        LEGACY METHOD: Keep for backward compatibility
+        Still reads from JSON file format
+        """
         if task_id:
             self.set_task_id(task_id)
         

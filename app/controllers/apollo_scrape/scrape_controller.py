@@ -42,99 +42,69 @@ class ScrapeController:
         cluster_data: Dict[str, List[str]], 
         crawl_task_id: Optional[str] = None
     ) -> Dict[str, List[str]]:
+        """Simplified cluster validation - just basic checks"""
         if not cluster_data:
             return {}
 
-        crawled_clusters = set()
-        user_pref_clusters = set()
-
-        if crawl_task_id:
-            try:
-                crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
-                if crawl_result and crawl_result.clusters:
-                    for domain_data in crawl_result.clusters.values():
-                        crawled_clusters.add(domain_data.id)
-                        for cluster in domain_data.clusters:
-                            crawled_clusters.add(cluster.id)
-                    logger.info(f"Found {len(crawled_clusters)} clusters in crawl data")
-            except Exception as e:
-                logger.warning(f"Could not load crawled clusters: {str(e)}")
-
-        user_pref_clusters = await ScrapeController.get_user_preference_clusters()
-
-        crawled_found = []
-        user_pref_found = []
-        custom_clusters = []
-        
-        for cluster_id in cluster_data.keys():
-            if cluster_id in crawled_clusters:
-                crawled_found.append(cluster_id)
-            elif cluster_id in user_pref_clusters:
-                user_pref_found.append(cluster_id)
+        # Basic validation of cluster data structure
+        validated_data = {}
+        for cluster_id, urls in cluster_data.items():
+            if not cluster_id or not cluster_id.strip():
+                logger.warning(f"Empty cluster ID found, skipping")
+                continue
+                
+            if not urls or not isinstance(urls, list):
+                logger.warning(f"Invalid URLs for cluster {cluster_id}, skipping")
+                continue
+                
+            valid_urls = [url for url in urls if url and isinstance(url, str) and url.strip()]
+            if valid_urls:
+                validated_data[cluster_id] = valid_urls
+                logger.info(f"Validated cluster '{cluster_id}': {len(valid_urls)} URLs")
             else:
-                custom_clusters.append(cluster_id)
+                logger.warning(f"No valid URLs found for cluster {cluster_id}")
 
-        logger.info(f"Cluster validation results:")
-        logger.info(f"  - From crawl data: {crawled_found}")
-        logger.info(f"  - From user preferences: {user_pref_found}")
-        logger.info(f"  - Custom clusters: {custom_clusters}")
-        
-        if custom_clusters:
-            logger.info(f"Proceeding with custom clusters: {custom_clusters}")
-
-        return cluster_data
+        logger.info(f"Cluster validation completed: {len(validated_data)} clusters validated")
+        return validated_data
 
     @staticmethod
     async def validate_years(
         year_data: Dict[str, List[str]], 
         crawl_task_id: Optional[str] = None
     ) -> Dict[str, List[str]]:
+        """Simplified year validation - just basic checks"""
         if not year_data:
             return {}
 
-        crawled_years = set()
-        user_pref_years = set()
-
-        if crawl_task_id:
-            try:
-                crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
-                if crawl_result and crawl_result.yearclusters:
-                    crawled_years = set(crawl_result.yearclusters.keys())
-                    logger.info(f"Found {len(crawled_years)} years in crawl data")
-            except Exception as e:
-                logger.warning(f"Could not load crawled years: {str(e)}")
-
-        user_pref_years = await ScrapeController.get_user_preference_years()
-
-        crawled_found = []
-        user_pref_found = []
-        custom_years = []
-        
-        for year_name in year_data.keys():
-            if year_name in crawled_years:
-                crawled_found.append(year_name)
-            elif year_name in user_pref_years:
-                user_pref_found.append(year_name)
+        # Basic validation of year data structure
+        validated_data = {}
+        for year, urls in year_data.items():
+            if not year or not year.strip():
+                logger.warning(f"Empty year found, skipping")
+                continue
+                
+            if not urls or not isinstance(urls, list):
+                logger.warning(f"Invalid URLs for year {year}, skipping")
+                continue
+                
+            valid_urls = [url for url in urls if url and isinstance(url, str) and url.strip()]
+            if valid_urls:
+                validated_data[year] = valid_urls
+                logger.info(f"Validated year '{year}': {len(valid_urls)} URLs")
             else:
-                custom_years.append(year_name)
+                logger.warning(f"No valid URLs found for year {year}")
 
-        logger.info(f"Year validation results:")
-        logger.info(f"  - From crawl data: {crawled_found}")
-        logger.info(f"  - From user preferences: {user_pref_found}")
-        logger.info(f"  - Custom years/clusters: {custom_years}")
-        
-        if custom_years:
-            logger.info(f"Proceeding with custom years/clusters: {custom_years}")
-
-        return year_data
+        logger.info(f"Year validation completed: {len(validated_data)} years validated")
+        return validated_data
 
     @staticmethod
     async def start_scrape(
         cluster_data: Dict[str, List[str]],  
-        year_data: Dict[str, List[str]],     
+        year_data: Dict[str, List[str]] = None,     
         crawl_task_id: Optional[str] = None
     ) -> ScrapingStatus:
 
+        # Basic input validation
         if cluster_data:
             for cluster_id, links in cluster_data.items():
                 if not cluster_id or not cluster_id.strip():
@@ -149,19 +119,9 @@ class ScrapeController:
                 if not links or not all(isinstance(link, str) and link.strip() for link in links):
                     raise HTTPException(status_code=400, detail=f"Invalid links for year/cluster {year}")
 
-        if crawl_task_id:
-            try:
-                crawl_result = await CrawlResultController.get_crawl_result(crawl_task_id)
-                if not crawl_result:
-                    raise HTTPException(status_code=404, detail=f"Crawl result for task {crawl_task_id} not found")
-                logger.info(f"Using crawl task {crawl_task_id} for reference data")
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.warning(f"Could not verify crawl task {crawl_task_id}: {str(e)}")
-
+        # Validate cluster and year data
         validated_cluster_data = await ScrapeController.validate_clusters(cluster_data, crawl_task_id)
-        validated_year_data = await ScrapeController.validate_years(year_data, crawl_task_id)
+        validated_year_data = await ScrapeController.validate_years(year_data or {}, crawl_task_id)
 
         total_clusters = len(validated_cluster_data) if validated_cluster_data else 0
         total_years = len(validated_year_data) if validated_year_data else 0
@@ -170,6 +130,7 @@ class ScrapeController:
         logger.info(f"  - {total_clusters} cluster(s): {list(validated_cluster_data.keys()) if validated_cluster_data else []}")
         logger.info(f"  - {total_years} year/cluster(s): {list(validated_year_data.keys()) if validated_year_data else []}")
 
+        # Create task with simplified parameters
         task_id = task_manager.create_task(
             task_type="scrape",
             params={
@@ -189,7 +150,7 @@ class ScrapeController:
         except Exception as e:
             logger.warning(f"Failed to start real-time publishing for task {task_id}: {str(e)}")
         
-        logger.info(f"Scrape task {task_id} created successfully with flexible validation")
+        logger.info(f"Scrape task {task_id} created successfully with simplified validation")
         
         return ScrapingStatus(
             id=task_id,

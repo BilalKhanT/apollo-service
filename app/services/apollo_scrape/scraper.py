@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import cloudscraper
@@ -20,7 +19,6 @@ class ClusterScraper:
     
     def __init__(
         self,
-        json_file_path: str,
         output_dir: str = "scraped_content",
         metadata_dir: str = "document_metadata",
         expiry_days: Optional[int] = None,
@@ -28,9 +26,7 @@ class ClusterScraper:
         max_workers: int = 20,
         min_content_chars: int = 200  
     ):
-
         self.logger = self._setup_logger()
-        self.json_file_path = json_file_path
         self.output_dir = output_dir
         self.metadata_dir = metadata_dir
         self.document_metadata_dir = os.path.join(self.metadata_dir, "files")
@@ -38,7 +34,8 @@ class ClusterScraper:
         self.progress_update_interval = progress_update_interval
         self.max_workers = max_workers
         self.min_content_chars = min_content_chars  
-        self.clusters_data = self.load_clusters_json()
+        
+        # Status tracking
         self.status = "initialized"
         self.progress = 0.0
         self.start_time = 0.0
@@ -55,7 +52,7 @@ class ClusterScraper:
         self.task_manager = None
         self.progress_callback = None
         
-        # Load HTML cleanup configuration
+        # HTML cleanup configuration
         self.tags_to_remove = TAGS_TO_REMOVE
         self.classes_to_remove = CLASSES_TO_REMOVE
         self.bank_name = DETECTED_BANK_NAME
@@ -88,20 +85,15 @@ class ClusterScraper:
     def normalize_path_name(self, name: str) -> str:
         if not name:
             return "unknown"
-
         normalized = re.sub(r'[^\w]', ' ', name.lower())
         return normalized if normalized else "unknown"
     
     def count_content_characters(self, markdown_content: str) -> int:
         if not markdown_content:
             return 0
-
         content_no_urls = re.sub(r'https?://\S+', ' ', markdown_content)
-
         content_no_links = re.sub(r'\[.*?\]\(.*?\)', '', content_no_urls)
-
         cleaned_content = re.sub(r'\s+', ' ', content_no_links).strip()
-
         return len(cleaned_content)
     
     def publish_progress(self, force: bool = False) -> None:
@@ -179,38 +171,6 @@ class ClusterScraper:
                 f"{self.progress:.1f}%"
             )
     
-    def load_clusters_json(self) -> Optional[Dict[str, Any]]:
-        try:
-            with open(self.json_file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self.logger.info(f"Successfully loaded clusters from {self.json_file_path}")
-                return data
-        except FileNotFoundError:
-            self.logger.error(f"Clusters JSON file not found: {self.json_file_path}")
-            return None
-        except json.JSONDecodeError:
-            self.logger.error(f"Invalid JSON format in file: {self.json_file_path}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Error loading clusters JSON file: {str(e)}")
-            self.logger.error(traceback.format_exc())
-            return None
-    
-    def get_cluster_by_id(self, cluster_id: str) -> Optional[Dict[str, Any]]:
-        if not self.clusters_data:
-            return None
-
-        for domain, domain_data in self.clusters_data.get("clusters", {}).items():
-            if domain_data.get("id") == cluster_id:
-                return domain_data
-
-            for sub_cluster in domain_data.get("clusters", []):
-                if sub_cluster.get("id") == cluster_id:
-                    return sub_cluster
-        
-        self.logger.warning(f"Cluster with ID '{cluster_id}' not found.")
-        return None
-    
     def get_scraper(self):
         return cloudscraper.create_scraper(
             browser={
@@ -249,9 +209,7 @@ class ClusterScraper:
         try:
             soup = BeautifulSoup(html, 'html.parser')
 
-            self.logger.debug(f"Removing tags: {self.tags_to_remove}")
-            self.logger.debug(f"Removing classes: {self.classes_to_remove}")
-
+            # Remove unwanted tags and classes
             if self.tags_to_remove and self.classes_to_remove:
                 for tag in soup.find_all(self.tags_to_remove, class_=self.classes_to_remove):
                     tag.decompose()
@@ -263,21 +221,19 @@ class ClusterScraper:
                     for tag in soup.find_all(class_=class_name):
                         tag.decompose()
 
+            # Remove media elements
             for img in soup.find_all('img'):
                 img.decompose()
-
             for figure in soup.find_all('figure'):
                 figure.decompose()
-
             for picture in soup.find_all('picture'):
                 picture.decompose()
-
             for form in soup.find_all('form'):
                 form.decompose()
-
             for svg in soup.find_all('svg'):
                 svg.decompose()
 
+            # Remove "Apply Now" sections
             for heading in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
                 if heading.get_text(strip=True).lower() == "apply now":
                     parent_to_remove = None
@@ -300,9 +256,11 @@ class ClusterScraper:
                     for form_section in soup.find_all('section', id='btm-apply-form'):
                         form_section.decompose()
 
+            # Replace links with text
             for a in soup.find_all('a'):
                 a.replace_with(a.get_text())
 
+            # Extract content based on bank
             content = self._extract_content_by_bank(soup)
             
             if not content:
@@ -312,6 +270,7 @@ class ClusterScraper:
                 self.logger.warning("No usable content found.")
                 return "", "", ""
 
+            # Get page title
             title_tag = soup.find('title')
             if title_tag and title_tag.string:
                 page_title = title_tag.string.strip()
@@ -328,8 +287,8 @@ class ClusterScraper:
             if not clean_title:
                 clean_title = "untitled-content"
 
+            # Convert to markdown
             markdown = md(str(content), heading_style="ATX")
-
             markdown = re.sub(r'!\[.*?\]\(.*?\)', '', markdown)
             markdown = re.sub(r'https?://\S+\.(jpg|jpeg|png|gif|svg|webp)(\?\S+)?', '', markdown, flags=re.IGNORECASE)
             
@@ -377,14 +336,12 @@ class ClusterScraper:
     
     def create_metadata_file(
         self, 
-        metadata_dir: str, 
         filename_base: str, 
         document_name: str, 
         url: str, 
         content: str, 
         expiry: Optional[str] = None
     ) -> str:
-
         try:
             os.makedirs(self.document_metadata_dir, exist_ok=True)
 
@@ -409,23 +366,12 @@ class ClusterScraper:
             self.logger.error(f"Error creating metadata file: {str(e)}")
             return ""
     
-    def url_to_directory_path(self, url: str) -> str:
-        parsed_url = url.split("://", 1)
-        if len(parsed_url) < 2:
-            return os.path.join(self.output_dir, "unknown")
-
-        domain_and_path = parsed_url[1].split("/", 1)
-        domain = self.normalize_path_name(domain_and_path[0])
-
-        dir_path = os.path.join(self.output_dir, domain)
-
-        if len(domain_and_path) > 1 and domain_and_path[1]:
-            path_parts = domain_and_path[1].split("/")
-            for part in path_parts[:-1]:  
-                if part:
-                    normalized_part = self.normalize_path_name(part)
-                    dir_path = os.path.join(dir_path, normalized_part)
-
+    def cluster_to_directory_path(self, cluster_id: str) -> str:
+        # normalized_cluster = self.normalize_path_name(cluster_id)
+        # if not normalized_cluster:
+        #     normalized_cluster = "unknown_cluster"
+        
+        dir_path = os.path.join(self.output_dir, cluster_id)
         return dir_path
     
     def process_url(self, url: str, cluster_id: str, expiry_date: Optional[str]) -> Dict[str, Any]:
@@ -486,7 +432,7 @@ class ClusterScraper:
             if not normalized_filename:
                 normalized_filename = "untitled"
 
-            dir_path = self.url_to_directory_path(url)
+            dir_path = self.cluster_to_directory_path(cluster_id)
             os.makedirs(dir_path, exist_ok=True)
 
             file_path = os.path.join(dir_path, f"{normalized_filename}.md")
@@ -496,7 +442,6 @@ class ClusterScraper:
             self.logger.info(f"Content saved to: {file_path} ({char_count} characters)")
 
             self.create_metadata_file(
-                self.metadata_dir,
                 normalized_filename,
                 document_title,
                 url,
@@ -526,10 +471,14 @@ class ClusterScraper:
     
     def scrape_clusters(
         self, 
-        cluster_ids: List[str],
+        cluster_data: Dict[str, List[str]],  # SIMPLIFIED: Direct cluster data input
         task_id: Optional[str] = None,
         callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> Dict[str, Any]:
+        """
+        SIMPLIFIED METHOD: Directly takes cluster_data as Dict[str, List[str]]
+        No more JSON files, no more complex ID extraction - just pure scraping
+        """
         if task_id:
             self.set_task_id(task_id)
         
@@ -546,23 +495,33 @@ class ClusterScraper:
         self.total_pages = 0
         self.error = None  
         self.publish_progress(force=True)
+        
+        # Create directories
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.metadata_dir, exist_ok=True)
         os.makedirs(self.document_metadata_dir, exist_ok=True)
+        
+        # Calculate expiry date
         expiry_date = None
         if self.expiry_days is not None:
             expiry_date = (datetime.now() + timedelta(days=self.expiry_days)).strftime('%Y-%m-%d')
+        
         self.status = "counting_pages"
         self.publish_progress(force=True)
-        self.total_pages = 0
-        valid_clusters = []
         
-        for cluster_id in cluster_ids:
-            cluster = self.get_cluster_by_id(cluster_id)
-            if cluster:
-                urls = cluster.get("urls", [])
-                self.total_pages += len(urls)
-                valid_clusters.append((cluster_id, cluster, urls))
+        # Count total pages and validate clusters
+        valid_clusters = []
+        for cluster_id, urls in cluster_data.items():
+            if urls and isinstance(urls, list):
+                valid_urls = [url for url in urls if url and isinstance(url, str) and url.strip()]
+                if valid_urls:
+                    self.total_pages += len(valid_urls)
+                    valid_clusters.append((cluster_id, valid_urls))
+                    self.logger.info(f"Cluster '{cluster_id}': {len(valid_urls)} URLs to scrape")
+                else:
+                    self.logger.warning(f"Cluster '{cluster_id}' has no valid URLs - skipping")
+            else:
+                self.logger.warning(f"Cluster '{cluster_id}' has invalid URL list - skipping")
         
         if self.total_pages == 0:
             self.logger.warning("No pages found to scrape in the specified clusters")
@@ -594,7 +553,8 @@ class ClusterScraper:
             "errors": []
         }
 
-        for cluster_id, cluster, urls in valid_clusters:
+        # Process each cluster
+        for cluster_id, urls in valid_clusters:
             self.current_cluster_id = cluster_id
             self.publish_progress(force=True)
             
@@ -608,6 +568,7 @@ class ClusterScraper:
                 "errors": []
             }
 
+            # Use ThreadPoolExecutor for parallel processing
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures_to_url = {
                     executor.submit(self.process_url, url, cluster_id, expiry_date): url
@@ -647,6 +608,7 @@ class ClusterScraper:
 
             results["clusters_scraped"].append(cluster_results)
 
+        # Finalize results
         results["pages_scraped"] = self.pages_scraped
         results["pages_failed"] = self.pages_failed
         results["pages_skipped_short"] = self.pages_skipped_short
@@ -667,30 +629,6 @@ class ClusterScraper:
         self.logger.info(f"{'='*60}")
         
         return results
-    
-    def list_available_clusters(self) -> List[Dict[str, Any]]:
-        if not self.clusters_data:
-            return []
-        
-        clusters_info = []
-
-        for domain, domain_data in self.clusters_data.get("clusters", {}).items():
-            clusters_info.append({
-                "id": domain_data.get("id"),
-                "name": domain,
-                "type": "domain",
-                "url_count": domain_data.get("count", 0)
-            })
-
-            for sub_cluster in domain_data.get("clusters", []):
-                clusters_info.append({
-                    "id": sub_cluster.get("id"),
-                    "name": f"{domain} - {sub_cluster.get('path', 'unknown-path')}",
-                    "type": "path",
-                    "url_count": sub_cluster.get("url_count", 0)
-                })
-        
-        return clusters_info
     
     def get_status(self) -> Dict[str, Any]:
         return {

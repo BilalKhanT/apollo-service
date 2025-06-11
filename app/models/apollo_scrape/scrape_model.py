@@ -47,14 +47,11 @@ class ScrapingRequest(BaseModel):
     @field_validator('years')
     @classmethod
     def validate_years(cls, v: Dict[str, List[str]]) -> Dict[str, List[str]]:
-        for year, links in v.items():
-            if year != "No Year" and (not year.isdigit() or len(year) != 4):
-                raise ValueError(f'Invalid year format: "{year}". Must be 4 digits or "No Year"')
-
+        for category, links in v.items():
             if not links:
-                raise ValueError(f'Year "{year}" must have at least one link')
+                raise ValueError(f'Category "{category}" must have at least one link')
             if not all(isinstance(link, str) and link.strip() for link in links):
-                raise ValueError(f'All links for year "{year}" must be non-empty strings')
+                raise ValueError(f'All links for category "{category}" must be non-empty strings')
         
         return v
     
