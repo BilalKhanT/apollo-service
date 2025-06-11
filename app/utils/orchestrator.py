@@ -107,6 +107,11 @@ class ApolloOrchestrator:
     ) -> Dict[str, Any]:
         await self._start_realtime_publishing(task_id, interval=1.0)
 
+        processor = None
+        clusterer = None
+        year_extractor = None
+        crawler = None
+
         if max_links_to_scrape is None:
             max_links_to_scrape = float("inf")
         if max_pages_to_scrape is None:
@@ -228,7 +233,6 @@ class ApolloOrchestrator:
             )
 
             setattr(self, f"crawler_{task_id}", crawler)
-
             crawler.register_status_callback(status_callback)
 
             self.publish_log(task_id, f"Starting crawler for {base_url}", "info")
@@ -320,7 +324,7 @@ class ApolloOrchestrator:
                 bank_keywords=BANK_KEYWORDS
             )
 
-            process_result = await loop.run_in_executor(None, processor.process)
+            process_result = processor.process()
 
             self.publish_log(
                 task_id,
@@ -338,31 +342,35 @@ class ApolloOrchestrator:
                 }
             )
 
-            task_manager.update_task_status(
-                task_id,
-                status="clustering",
-                progress=65.0
-            )
+            if process_result['summary']['bank_links_count'] > 0:
+                task_manager.update_task_status(
+                    task_id,
+                    status="clustering",
+                    progress=65.0
+                )
 
-            self.publish_log(task_id, "Clustering URLs...", "info")
-            clusterer = URLClusterer(
-                input_file=categorized_file,
-                output_file=url_clusters_file,
-                min_cluster_size=CLUSTER_MIN_SIZE,
-                path_depth=CLUSTER_PATH_DEPTH,
-                similarity_threshold=CLUSTER_SIMILARITY_THRESHOLD
-            )
+                self.publish_log(task_id, "Clustering URLs...", "info")
+                clusterer = URLClusterer(
+                    input_file=categorized_file,
+                    output_file=url_clusters_file,
+                    min_cluster_size=CLUSTER_MIN_SIZE,
+                    path_depth=CLUSTER_PATH_DEPTH,
+                    similarity_threshold=CLUSTER_SIMILARITY_THRESHOLD
+                )
 
-            cluster_result = await loop.run_in_executor(None, clusterer.cluster)
+                cluster_result = await clusterer.cluster()
 
-            if hasattr(self, f"crawler_{task_id}"):
-                delattr(self, f"crawler_{task_id}")
-
-            self.publish_log(
-                task_id,
-                f"URL clustering completed. Identified {cluster_result['summary']['total_domains']} domains and {cluster_result['summary']['total_clusters']} clusters across {cluster_result['summary']['total_urls']} URLs.",
-                "info"
-            )
+                self.publish_log(
+                    task_id,
+                    f"URL clustering completed. Identified {cluster_result['summary']['total_domains']} domains and {cluster_result['summary']['total_clusters']} clusters across {cluster_result['summary']['total_urls']} URLs. Skipped {cluster_result['summary']['skipped_urls']} already clustered URLs.",
+                    "info"
+                )
+            else:
+                self.publish_log(task_id, "No bank links found, skipping URL clustering", "info")
+                cluster_result = {
+                    'summary': {'total_domains': 0, 'total_clusters': 0, 'total_urls': 0, 'skipped_urls': 0},
+                    'clusters': {}
+                }
 
             task_manager.update_task_status(
                 task_id,
@@ -374,25 +382,32 @@ class ApolloOrchestrator:
                 }
             )
 
-            task_manager.update_task_status(
-                task_id,
-                status="year_extraction",
-                progress=85.0
-            )
+            if process_result['summary']['file_links_count'] > 0:
+                task_manager.update_task_status(
+                    task_id,
+                    status="year_extraction",
+                    progress=85.0
+                )
 
-            self.publish_log(task_id, "Extracting years from file URLs...", "info")
-            year_extractor = YearExtractor(
-                input_file=categorized_file,
-                output_file=year_clusters_file
-            )
+                self.publish_log(task_id, "Extracting years from file URLs...", "info")
+                year_extractor = YearExtractor(
+                    input_file=categorized_file,
+                    output_file=year_clusters_file
+                )
 
-            year_result = await loop.run_in_executor(None, year_extractor.process)
+                year_result = await year_extractor.process()
 
-            self.publish_log(
-                task_id,
-                f"Year extraction completed. Identified {len(year_result)} distinct years across {sum(len(files) for files in year_result.values())} files.",
-                "info"
-            )
+                self.publish_log(
+                    task_id,
+                    f"Year extraction completed. Identified {year_result['summary']['total_years']} distinct years across {year_result['summary']['total_urls']} files. Skipped {year_result['summary']['skipped_urls']} already year-clustered URLs.",
+                    "info"
+                )
+            else:
+                self.publish_log(task_id, "No file links found, skipping year extraction", "info")
+                year_result = {
+                    'summary': {'total_years': 0, 'total_urls': 0, 'skipped_urls': 0, 'year_distribution': {}},
+                    'years': {}
+                }
 
             task_manager.update_task_status(
                 task_id,
@@ -400,10 +415,7 @@ class ApolloOrchestrator:
                 result={
                     **task_manager.get_task_status(task_id)["result"],
                     "year_extraction_complete": True,
-                    "year_extraction_results": {
-                        "total_years": len(year_result),
-                        "total_files": sum(len(files) for files in year_result.values())
-                    }
+                    "year_extraction_results": year_result["summary"]
                 }
             )
 
@@ -421,7 +433,7 @@ class ApolloOrchestrator:
                     link_found=crawl_result["summary"]["total_links_found"],
                     pages_scraped=crawl_result["summary"]["total_pages_scraped"],
                     clusters=cluster_result["clusters"],
-                    yearclusters=year_result
+                    yearclusters=year_result["years"]
                 )
                 
                 self.publish_log(task_id, "Crawl results saved to database successfully", "info")
@@ -440,6 +452,9 @@ class ApolloOrchestrator:
                     error=error_msg
                 )
                 return task_manager.get_task_status(task_id)
+
+            if hasattr(self, f"crawler_{task_id}"):
+                delattr(self, f"crawler_{task_id}")
 
             task_manager.update_task_status(
                 task_id,
@@ -463,6 +478,12 @@ class ApolloOrchestrator:
         except Exception as e:
             error_msg = f"Error in crawl workflow: {str(e)}"
             self.publish_log(task_id, error_msg, "error")
+
+            if hasattr(self, f"crawler_{task_id}"):
+                try:
+                    delattr(self, f"crawler_{task_id}")
+                except Exception:
+                    pass
 
             self.cleanup_temp_files(temp_files)
 
