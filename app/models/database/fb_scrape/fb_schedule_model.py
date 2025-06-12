@@ -25,6 +25,11 @@ class DayOfWeek(str, Enum):
 
 
 class FacebookScrapeSchedule(Document):
+    bot_id: str = Field(
+        default=None,
+        description="Specific BOT ID",
+        example="123e4567-e89b-12d3-a456-426614174000"
+    )
     keywords: List[str] = Field(..., description="Keywords to filter Facebook posts")
     days: int = Field(..., description="Number of days to look back for posts", ge=1, le=365)
     schedule_name: Optional[str] = None

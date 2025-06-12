@@ -220,7 +220,7 @@ class FileDownloader:
             self.logger.error(f"Error generating checksum for {file_path}: {e}")
             return "checksum_error"
 
-    def create_metadata_file(self, filename_base: str, document_name: str, url: str, 
+    def create_metadata_file(self, bot_id: str, filename_base: str, document_name: str, url: str, 
                            file_path: str, expiry: Optional[str] = None) -> str:
         try:
             os.makedirs(self.files_metadata_dir, exist_ok=True)
@@ -229,9 +229,10 @@ class FileDownloader:
             checksum = self.generate_checksum(file_path)
             document_id = str(uuid.uuid4())
 
-            metadata_content = f"document id: {document_id}\n"
-            metadata_content += f"document name: {document_name}\n"
-            metadata_content += f"document url: {url}\n"
+            metadata_content = f"bot_id: {bot_id}\n"
+            metadata_content += f"document_id: {document_id}\n"
+            metadata_content += f"document_name: {document_name}\n"
+            metadata_content += f"document_url: {url}\n"
             metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
@@ -246,7 +247,7 @@ class FileDownloader:
             self.logger.error(f"Error creating metadata file: {str(e)}")
             return ""
 
-    def _download_file(self, url: str, folder: str, year: str = None, retry_attempts: int = 0) -> Dict[str, Any]:
+    def _download_file(self, bot_id: str, url: str, folder: str, year: str = None, retry_attempts: int = 0) -> Dict[str, Any]:
         with self.counter_lock:
             self.current_file = url
             if year is not None:
@@ -300,7 +301,7 @@ class FileDownloader:
                 if retry_attempts < self.retry_count and head_response.status_code != 404:
                     self.logger.warning(f"{error_msg}, retrying ({retry_attempts+1}/{self.retry_count})...")
                     time.sleep(0.5)  # Add a small delay before retrying
-                    return self._download_file(url, folder, year, retry_attempts + 1)
+                    return self._download_file(bot_id, url, folder, year, retry_attempts + 1)
                 else:
                     self.logger.error(f"{error_msg}, max retries exceeded")
                     return {
@@ -343,7 +344,7 @@ class FileDownloader:
                 if retry_attempts < self.retry_count and response.status_code != 404:
                     self.logger.warning(f"{error_msg}, retrying ({retry_attempts+1}/{self.retry_count})...")
                     time.sleep(0.5)  
-                    return self._download_file(url, folder, year, retry_attempts + 1)
+                    return self._download_file(bot_id, url, folder, year, retry_attempts + 1)
                 else:
                     self.logger.error(f"{error_msg}, max retries exceeded")
                     return {
@@ -389,6 +390,7 @@ class FileDownloader:
                     filename_base = "unnamed_file"
 
                 self.create_metadata_file(
+                    bot_id=bot_id,
                     filename_base=filename_base,
                     document_name=filename,
                     url=url,
@@ -412,7 +414,7 @@ class FileDownloader:
                 if retry_attempts < self.retry_count:
                     self.logger.warning(f"{error_msg}, retrying ({retry_attempts+1}/{self.retry_count})...")
                     time.sleep(0.5)  
-                    return self._download_file(url, folder, year, retry_attempts + 1)
+                    return self._download_file(bot_id, url, folder, year, retry_attempts + 1)
                 else:
                     return {
                         "url": url,
@@ -430,7 +432,7 @@ class FileDownloader:
             if retry_attempts < self.retry_count:
                 self.logger.warning(f"{error_msg}, retrying ({retry_attempts+1}/{self.retry_count})...")
                 time.sleep(0.5)  
-                return self._download_file(url, folder, year, retry_attempts + 1)
+                return self._download_file(bot_id, url, folder, year, retry_attempts + 1)
             else:
                 return {
                     "url": url,
@@ -486,20 +488,15 @@ class FileDownloader:
                 self.files_processed += 1
                 self.publish_progress()
 
-    # =============================================
-    # NEW SIMPLIFIED METHOD - DIRECT YEAR DATA
-    # =============================================
     def download_files_direct(
         self,
-        year_data: Dict[str, List[str]],  # SIMPLIFIED: Direct year data input
+        bot_id: str,
+        year_data: Dict[str, List[str]],  
         base_folder: str = "downloads",
         task_id: Optional[str] = None,
         callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> Dict[str, Any]:
-        """
-        SIMPLIFIED METHOD: Directly takes year_data as Dict[str, List[str]]
-        No more JSON files, no more complex processing - just pure downloading
-        """
+
         if task_id:
             self.set_task_id(task_id)
         
@@ -591,7 +588,7 @@ class FileDownloader:
                     batch = all_tasks[i:i+self.batch_size]
 
                     futures_dict = {
-                        executor.submit(self._download_file, url, folder, year): (url, folder, year)
+                        executor.submit(self._download_file, bot_id, url, folder, year): (url, folder, year)
                         for url, folder, year in batch
                     }
 
@@ -657,177 +654,6 @@ class FileDownloader:
                     pass
             self.session_pool = []
 
-    # =============================================
-    # KEEP ORIGINAL METHOD FOR BACKWARD COMPATIBILITY
-    # =============================================
-    def download_files_by_year(
-        self,
-        json_file: str,
-        years_to_download: Optional[List[str]] = None,
-        base_folder: str = "downloads",
-        task_id: Optional[str] = None,
-        callback: Optional[Callable[[Dict[str, Any]], None]] = None
-    ) -> Dict[str, Any]:
-        """
-        LEGACY METHOD: Keep for backward compatibility
-        Still reads from JSON file format
-        """
-        if task_id:
-            self.set_task_id(task_id)
-        
-        if callback:
-            self.set_progress_callback(callback)
-
-        self.start_time = time.time()
-        self.status = "initializing"
-        self.progress = 65.0  
-        self.files_downloaded = 0
-        self.files_failed = 0
-        self.files_processed = 0
-        self.total_files = 0
-        self.error = None
-        self.results = {
-            "status": "success",
-            "total": 0,
-            "successful": 0,
-            "failed": 0,
-            "by_year": {},
-            "execution_time_seconds": 0,
-            "metadata_directory": self.metadata_dir
-        }
-
-        self.session_pool = [self.create_new_session() for _ in range(self.max_workers * 2)]
-        
-        self.publish_progress(force=True)
-        
-        try:
-            os.makedirs(base_folder, exist_ok=True)
-            os.makedirs(self.metadata_dir, exist_ok=True)
-            self.logger.info(f"Created base folder: {base_folder}")
-            self.logger.info(f"Created metadata directory: {self.metadata_dir}")
-
-            with open(json_file, 'r', encoding='utf-8') as f:
-                try:
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    error_msg = f"Invalid JSON format in file: {json_file}"
-                    self.logger.error(error_msg)
-                    self.status = "failed"
-                    self.error = error_msg
-                    self.publish_progress(force=True)
-                    return {
-                        "status": "failed",
-                        "error": error_msg,
-                        "successful": 0,
-                        "failed": 0,
-                        "total": 0
-                    }
-
-            years = years_to_download if years_to_download else list(data.keys())
-            years_str = ", ".join(str(year) for year in years)
-            self.logger.info(f"Processing the following years: {years_str}")
-            self.status = "counting_files"
-            self.publish_progress(force=True)
-
-            self.total_files = 0
-            for year in years:
-                if year in data:
-                    self.total_files += len(data[year])
-            
-            self.results["total"] = self.total_files
-            
-            self.logger.info(f"Found {self.total_files} files to download across {len(years)} years")
-
-            self.status = "downloading"
-            self.publish_progress(force=True)
-
-            for year in years:
-                if year in data and data[year]:  
-                    year_folder = os.path.join(base_folder, str(year))
-                    self.ensure_folder_exists(year_folder)
-                    self.logger.info(f"Created year folder: {year_folder}")
-
-            all_tasks = []
-            for year in years:
-                if year not in data or not data[year]:
-                    continue
-                
-                year_folder = os.path.join(base_folder, str(year))
-                for url in data[year]:
-                    all_tasks.append((url, year_folder, year))
-
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures_list = []
-                
-                for i in range(0, len(all_tasks), self.batch_size):
-                    batch = all_tasks[i:i+self.batch_size]
-
-                    futures_dict = {
-                        executor.submit(self._download_file, url, folder, year): (url, folder, year)
-                        for url, folder, year in batch
-                    }
-
-                    for future in as_completed(futures_dict):
-                        url, folder, year = futures_dict[future]
-                        
-                        try:
-                            result = future.result()
-
-                            self.update_results(result)
-                            
-                        except Exception as e:
-                            self.logger.error(f"Error processing result for {url}: {str(e)}")
-                            self.logger.error(traceback.format_exc())
-
-                            error_result = {
-                                "url": url,
-                                "success": False,
-                                "file_path": None,
-                                "message": f"Error in thread execution: {str(e)}",
-                                "status_code": 0,
-                                "year": year
-                            }
-
-                            self.update_results(error_result)
-
-            execution_time = time.time() - self.start_time
-            self.results["execution_time_seconds"] = execution_time
-
-            self.status = "completed"
-            self.progress = 90.0  
-            self.publish_progress(force=True)
-            
-            self.logger.info(
-                f"Download summary: {self.results['successful']} successful, "
-                f"{self.results['failed']} failed out of {self.results['total']} total files. "
-                f"Completed in {execution_time:.2f} seconds."
-            )
-            
-            return self.results
-            
-        except Exception as e:
-            error_msg = f"Error in download_files_by_year: {str(e)}"
-            self.logger.error(error_msg)
-            self.logger.error(traceback.format_exc())
-            self.status = "failed"
-            self.error = error_msg
-            self.publish_progress(force=True)
-            
-            return {
-                "status": "failed",
-                "error": error_msg,
-                "successful": self.files_downloaded,
-                "failed": self.files_failed,
-                "total": self.total_files
-            }
-        finally:
-            for session in self.session_pool:
-                try:
-                    session.close()
-                except:
-                    pass
-            self.session_pool = []
-    
     def get_status(self) -> Dict[str, Any]:
         return {
             'status': self.status,

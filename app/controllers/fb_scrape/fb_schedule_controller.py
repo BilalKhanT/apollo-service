@@ -26,6 +26,7 @@ class FBScheduleController:
             
             if existing_schedule:
                 logger.info(f"Updating existing Facebook schedule for keywords: {sorted_keywords}")
+                existing_schedule.bot_id = request.bot_id
                 existing_schedule.schedule_name = request.schedule_name
                 existing_schedule.day_of_week = request.day_of_week
                 existing_schedule.time_of_day = request.time_of_day
@@ -43,6 +44,7 @@ class FBScheduleController:
                 logger.info(f"Creating new Facebook schedule for keywords: {sorted_keywords}")
                 
                 schedule = FacebookScrapeSchedule(
+                    bot_id=request.bot_id,
                     keywords=request.keywords,
                     days=request.days,
                     schedule_name=request.schedule_name,
@@ -308,6 +310,8 @@ class FBScheduleController:
 
             timing_changed = False
 
+            if request.bot_id is not None:
+                schedule.bot_id = request.bot_id
             if request.keywords is not None:
                 schedule.keywords = request.keywords
             if request.days is not None:

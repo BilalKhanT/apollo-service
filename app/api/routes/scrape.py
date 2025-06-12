@@ -49,6 +49,7 @@ async def start_scrape(
 ) -> ScrapingResponse:
     try:
         scrape_status = await ScrapeController.start_scrape(
+            bot_id=request.bot_id,
             cluster_data=request.cluster_ids,  
             year_data=request.years,          
             crawl_task_id=crawl_task_id or request.crawl_task_id
@@ -56,6 +57,7 @@ async def start_scrape(
 
         background_tasks.add_task(
             run_scrape_background,
+            bot_id=request.bot_id,
             task_id=scrape_status.id,
             cluster_data=request.cluster_ids, 
             year_data=request.years,          
@@ -84,6 +86,7 @@ async def start_scrape(
         )
 
 async def run_scrape_background(
+    bot_id: str,
     task_id: str,
     cluster_data: Dict[str, List[str]], 
     year_data: Dict[str, List[str]] = None,  
@@ -91,6 +94,7 @@ async def run_scrape_background(
 ):
     try:
         await orchestrator.run_scrape_download(
+            bot_id=bot_id,
             task_id=task_id,
             cluster_data=cluster_data,  
             year_data=year_data,       

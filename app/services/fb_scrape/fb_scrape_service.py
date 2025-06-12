@@ -341,7 +341,7 @@ class FacebookScrapingService:
     def determine_source_from_post(self, post_data: Dict[str, Any]) -> str:
         return 'facebook'
 
-    def create_metadata_file(self, filename_base: str, post_data: Dict[str, Any],
+    def create_metadata_file(self, bot_id: str, filename_base: str, post_data: Dict[str, Any],
                            category: str, expiry_date: Optional[str] = None, output_dir: Optional[str] = None,
                            file_path: Optional[str] = None) -> str:
         try:
@@ -358,9 +358,10 @@ class FacebookScrapingService:
 
             facebook_url = f"https://www.facebook.com/{post_id}" if post_id != 'unknown' else 'unknown'
 
-            metadata_content = f"document id: {document_id}\n"
-            metadata_content += f"document name: Facebook Post - {category}\n"
-            metadata_content += f"document url: {facebook_url}\n"
+            metadata_content = f"bot_id: {bot_id}\n"
+            metadata_content += f"document_id: {document_id}\n"
+            metadata_content += f"document_name: Facebook Post - {category}\n"
+            metadata_content += f"document_url: {facebook_url}\n"
             metadata_content += f"expiry: {expiry_date if expiry_date else 'none'}\n"
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
@@ -375,7 +376,7 @@ class FacebookScrapingService:
             self.logger.error(f"Error creating metadata file: {str(e)}")
             return ""
 
-    def process_post_batch(self, batch_id: int, posts_batch: List[Dict[str, Any]], 
+    def process_post_batch(self, bot_id: str, batch_id: int, posts_batch: List[Dict[str, Any]], 
                           keywords: List[str], keyword_folders: Dict[str, str], 
                           final_output_dir: str) -> Dict[str, Any]:
         batch_result = {
@@ -471,6 +472,7 @@ class FacebookScrapingService:
                                             f.write(f"![Image]({image_url})\n\n")
 
                             self.create_metadata_file(
+                                bot_id=bot_id,
                                 filename_base=filename_base,
                                 post_data=post,
                                 category=offer_category,
@@ -557,6 +559,7 @@ class FacebookScrapingService:
 
     def scrape_facebook_posts(
         self,
+        bot_id: str,
         keywords: List[str],
         days: int,
         task_id: Optional[str] = None,
@@ -592,7 +595,7 @@ class FacebookScrapingService:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
             keywords_str = "_".join(keywords) if keywords else "all"
 
-            final_output_dir = f"{self.output_dir}/facebook_data_{timestamp}_{keywords_str}"
+            final_output_dir = f"{self.output_dir}"
             os.makedirs(final_output_dir, exist_ok=True)
             
             self.logger.info(f"Starting Facebook scraping to directory: {final_output_dir}")
@@ -697,6 +700,7 @@ class FacebookScrapingService:
                 futures = {
                     executor.submit(
                         self.process_post_batch, 
+                        bot_id,
                         batch_id, 
                         batch_posts, 
                         keywords, 
@@ -726,8 +730,8 @@ class FacebookScrapingService:
                             self.current_batch += 1
                             self.publish_progress()
 
-            if not self.stop_event.is_set():
-                self._create_summary_file(final_output_dir, keywords, start_date, end_date)
+            # if not self.stop_event.is_set():
+            #     self._create_summary_file(final_output_dir, keywords, start_date, end_date)
 
             if self.stop_event.is_set():
                 self.status = "stopped"

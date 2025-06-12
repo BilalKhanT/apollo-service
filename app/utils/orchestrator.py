@@ -28,6 +28,7 @@ from app.services.apollo_scrape.downloader import FileDownloader
 from app.services.restaurant_deal.deal_scrape_service import DealScrapperService
 from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
 from app.controllers.restaurant_deal.deal_scrape_controller import DealScrapeController
+from app.controllers.apollo_scrape.scrape_data_controller import ScrapeDataController
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -601,6 +602,7 @@ class ApolloOrchestrator:
 
     async def run_scrape_download(
         self,
+        bot_id: str,
         task_id: str,
         cluster_data: Dict[str, List[str]],  
         year_data: Dict[str, List[str]] = None,  
@@ -636,9 +638,8 @@ class ApolloOrchestrator:
                 if crawl_task_id:
                     await CrawlResultController.mark_as_scraped(crawl_task_id)
 
-                timestamp = time.strftime("%Y%m%d-%H%M%S")
-                scrape_output_dir = os.path.join(self.scrape_dir, f"scrape_{timestamp}")
-                metadata_output_dir = os.path.join(self.metadata_dir, f"metadata_{timestamp}")
+                scrape_output_dir = os.path.join(self.scrape_dir, f"{task_id}")
+                metadata_output_dir = os.path.join(self.metadata_dir, f"{task_id}")
 
                 self.publish_log(task_id, f"Preparing to scrape {len(cluster_data)} clusters with direct URLs", "info")
                 
@@ -660,12 +661,12 @@ class ApolloOrchestrator:
 
                 self.publish_log(task_id, f"Starting direct scraping of {len(cluster_data)} clusters", "info")
                 
-                # DIRECT SCRAPING - NO JSON FILES
                 loop = asyncio.get_event_loop()
                 scrape_result = await loop.run_in_executor(
                     None, 
-                    scraper.scrape_clusters,  # Direct method call with cluster_data
-                    cluster_data,  # Pass cluster_data directly
+                    scraper.scrape_clusters,  
+                    bot_id,
+                    cluster_data,  
                     task_id
                 )
 
@@ -702,9 +703,8 @@ class ApolloOrchestrator:
                     }
                 )
                 # Set metadata_output_dir for download phase even if scraping is skipped
-                metadata_output_dir = os.path.join(self.metadata_dir, f"metadata_{time.strftime('%Y%m%d-%H%M%S')}")
+                metadata_output_dir = os.path.join(self.metadata_dir, f"{task_id}")
 
-            # DOWNLOAD PHASE - SIMPLIFIED (NEW APPROACH)
             if year_data:
                 task_manager.update_task_status(
                     task_id,
@@ -721,8 +721,7 @@ class ApolloOrchestrator:
                     progress=65.0
                 )
 
-                timestamp = time.strftime("%Y%m%d-%H%M%S")
-                download_output_dir = os.path.join(self.download_dir, f"download_{timestamp}")
+                download_output_dir = os.path.join(self.download_dir, f"{task_id}")
 
                 # Log year details
                 total_files = 0
@@ -733,7 +732,6 @@ class ApolloOrchestrator:
                 
                 self.publish_log(task_id, f"Total files to download: {total_files}", "info")
 
-                # DIRECT DOWNLOAD - NO JSON FILES
                 downloader = FileDownloader(
                     metadata_dir=metadata_output_dir,
                     max_workers=MAX_DOWNLOAD_WORKERS,
@@ -745,8 +743,9 @@ class ApolloOrchestrator:
                 loop = asyncio.get_event_loop()
                 download_result = await loop.run_in_executor(
                     None,
-                    downloader.download_files_direct,  # NEW: Use direct method
-                    year_data,  # NEW: Pass year_data directly
+                    downloader.download_files_direct,  
+                    bot_id,
+                    year_data, 
                     download_output_dir,
                     task_id
                 )
@@ -783,11 +782,34 @@ class ApolloOrchestrator:
                     }
                 )
 
+            # CLEANUP PHASE - Add this after download phase completes
+            task_manager.update_task_status(
+                task_id,
+                status="cleaning_up",
+                progress=92.0
+            )
+
+            self.publish_log(task_id, "Starting cleanup of scraped data and downloaded files...", "info")
+
+            try:
+                scraped_at = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')
+                cleanup_success = await ScrapeDataController.web_scraper_cleanup(task_id=task_id, scraped=scraped_at)
+                
+                if cleanup_success:
+                    self.publish_log(task_id, "Successfully cleaned up all files and sent to Momento", "info")
+                else:
+                    self.publish_log(task_id, "Cleanup completed with some warnings - check logs for details", "warning")
+                    
+            except Exception as cleanup_error:
+                error_msg = f"Cleanup phase failed: {str(cleanup_error)}"
+                self.publish_log(task_id, error_msg, "warning")
+                self.publish_log(task_id, traceback.format_exc(), "error")
+
             # FINALIZE
             task_manager.update_task_status(
                 task_id,
                 status="finalizing",
-                progress=95.0
+                progress=96.0
             )
             
             self.publish_log(task_id, "Finalizing simplified workflow and generating summary...", "info")
@@ -1290,6 +1312,7 @@ class ApolloOrchestrator:
 
     async def run_facebook_scraping(
         self,
+        bot_id: str,
         task_id: str,
         keywords: List[str],
         days: int,
@@ -1314,8 +1337,7 @@ class ApolloOrchestrator:
                 progress=5.0
             )
 
-            timestamp = time.strftime("%Y%m%d-%H%M%S")
-            facebook_output_dir = os.path.join(self.base_directory, "facebook", f"facebook_{timestamp}")
+            facebook_output_dir = os.path.join(self.base_directory, "facebook", f"{task_id}")
 
             self.publish_log(task_id, f"Initializing Facebook scrapping service {ACCESS_TOKEN} and {PAGE_ID}", "info")
             facebook_scrapper = FacebookScrapingService(
@@ -1345,6 +1367,7 @@ class ApolloOrchestrator:
             scraping_result = await loop.run_in_executor(
                 None,
                 facebook_scrapper.scrape_facebook_posts,
+                bot_id,
                 keywords,
                 days,
                 task_id
@@ -1409,6 +1432,20 @@ class ApolloOrchestrator:
                 f"found {scraping_result['posts_found']} matching posts.",
                 "info"
             )
+
+            try:
+                scraped_at = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')
+                cleanup_success = await ScrapeDataController.fb_scraper_cleanup(task_id=task_id, scraped=scraped_at)
+                
+                if cleanup_success:
+                    self.publish_log(task_id, "Successfully cleaned up all files and sent to Momento", "info")
+                else:
+                    self.publish_log(task_id, "Cleanup completed with some warnings - check logs for details", "warning")
+                    
+            except Exception as cleanup_error:
+                error_msg = f"Cleanup phase failed: {str(cleanup_error)}"
+                self.publish_log(task_id, error_msg, "warning")
+                self.publish_log(task_id, traceback.format_exc(), "error")
 
             task_manager.update_task_status(
                 task_id,

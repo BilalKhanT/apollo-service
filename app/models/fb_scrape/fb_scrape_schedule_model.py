@@ -19,6 +19,11 @@ class ScheduleStatus(str, Enum):
     PAUSED = "paused"
 
 class FBScheduleRequest(BaseModel):
+    bot_id: str = Field(
+        default=None,
+        description="Specific BOT ID",
+        example="123e4567-e89b-12d3-a456-426614174000"
+    )
     keywords: List[str] = Field(
         ..., 
         description="List of keywords to filter Facebook posts", 
@@ -80,6 +85,7 @@ class FBScheduleRequest(BaseModel):
         use_enum_values = True
         json_schema_extra = {
             "example": {
+                "bot_id": "123e4567-e89b-12d3-a456-426614174000",
                 "keywords": ["offer", "discount", "deal"],
                 "days": 30,
                 "schedule_name": "Daily FB Deal Scraping",
@@ -133,6 +139,11 @@ class FBScheduleResponse(BaseModel):
         }
 
 class FBScheduleUpdateRequest(BaseModel):
+    bot_id: str = Field(
+        default=None,
+        description="Specific BOT ID",
+        example="123e4567-e89b-12d3-a456-426614174000"
+    )
     keywords: Optional[List[str]] = Field(
         default=None, 
         description="Updated keywords list",
@@ -203,6 +214,7 @@ class FBScheduleUpdateRequest(BaseModel):
         use_enum_values = True
         json_schema_extra = {
             "example": {
+                "bot_id": "123e4567-e89b-12d3-a456-426614174000",
                 "keywords": ["offer", "discount", "deal", "promotion"],
                 "days": 45,
                 "schedule_name": "Updated FB Deal Scraping",

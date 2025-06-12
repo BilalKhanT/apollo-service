@@ -336,6 +336,7 @@ class ClusterScraper:
     
     def create_metadata_file(
         self, 
+        bot_id: str,
         filename_base: str, 
         document_name: str, 
         url: str, 
@@ -349,9 +350,10 @@ class ClusterScraper:
             checksum = self.generate_checksum(content)
             document_id = str(uuid.uuid4())
 
-            metadata_content = f"document id: {document_id}\n"
-            metadata_content += f"document name: {document_name}\n"
-            metadata_content += f"document url: {url}\n"
+            metadata_content = f"bot_id: {bot_id}\n"
+            metadata_content += f"document_id: {document_id}\n"
+            metadata_content += f"document_name: {document_name}\n"
+            metadata_content += f"document_url: {url}\n"
             metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
@@ -374,7 +376,7 @@ class ClusterScraper:
         dir_path = os.path.join(self.output_dir, cluster_id)
         return dir_path
     
-    def process_url(self, url: str, cluster_id: str, expiry_date: Optional[str]) -> Dict[str, Any]:
+    def process_url(self, bot_id: str, url: str, cluster_id: str, expiry_date: Optional[str]) -> Dict[str, Any]:
         result = {
             "url": url,
             "success": False,
@@ -442,6 +444,7 @@ class ClusterScraper:
             self.logger.info(f"Content saved to: {file_path} ({char_count} characters)")
 
             self.create_metadata_file(
+                bot_id,
                 normalized_filename,
                 document_title,
                 url,
@@ -471,14 +474,11 @@ class ClusterScraper:
     
     def scrape_clusters(
         self, 
+        bot_id: str,
         cluster_data: Dict[str, List[str]],  # SIMPLIFIED: Direct cluster data input
         task_id: Optional[str] = None,
         callback: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> Dict[str, Any]:
-        """
-        SIMPLIFIED METHOD: Directly takes cluster_data as Dict[str, List[str]]
-        No more JSON files, no more complex ID extraction - just pure scraping
-        """
         if task_id:
             self.set_task_id(task_id)
         
@@ -571,7 +571,7 @@ class ClusterScraper:
             # Use ThreadPoolExecutor for parallel processing
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures_to_url = {
-                    executor.submit(self.process_url, url, cluster_id, expiry_date): url
+                    executor.submit(self.process_url, bot_id, url, cluster_id, expiry_date): url
                     for url in urls
                 }
 

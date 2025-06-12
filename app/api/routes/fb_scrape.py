@@ -46,17 +46,14 @@ async def start_facebook_scraping(
         task_info = await FacebookScrapeController.start_facebook_scraping(
             keywords=request.keywords,
             days=request.days,
-            # access_token="EAANwmjYfSZAMBO9my96Ipmky8pZCHEkDOu5eXZAaHc7ge2LZCZCsZBz7yoj7O5mfZCHlTLVey0RbZBIUgQTpkqH7goqwQLTw0kWAw4GMaiOh36qIh3jYDX6KYfOqMBVjZBChSlCLNmljS4dswIB9sZCNvQZCXZC3xlMJ9FLDLUyT0dzd9XQBG5nHv4FPSW5hkr8Kt9eO",
-            # page_id="185182871519466"
         )
         
         background_tasks.add_task(
             run_facebook_scraping_background,
+            bot_id=request.bot_id,
             task_id=task_info["task_id"],
             keywords=request.keywords,
             days=request.days,
-            # access_token="EAANwmjYfSZAMBO9my96Ipmky8pZCHEkDOu5eXZAaHc7ge2LZCZCsZBz7yoj7O5mfZCHlTLVey0RbZBIUgQTpkqH7goqwQLTw0kWAw4GMaiOh36qIh3jYDX6KYfOqMBVjZBChSlCLNmljS4dswIB9sZCNvQZCXZC3xlMJ9FLDLUyT0dzd9XQBG5nHv4FPSW5hkr8Kt9eO",
-            # page_id="185182871519466"
         )
         
         return FacebookScrapingResponse(
@@ -83,6 +80,7 @@ async def start_facebook_scraping(
         )
 
 async def run_facebook_scraping_background(
+    bot_id: str,
     task_id: str,
     keywords: List[str],
     days: int,
@@ -91,6 +89,7 @@ async def run_facebook_scraping_background(
 ):
     try:
         await orchestrator.run_facebook_scraping(
+            bot_id=bot_id,
             task_id=task_id,
             keywords=keywords,
             days=days,

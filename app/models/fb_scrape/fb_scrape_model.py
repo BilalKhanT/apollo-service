@@ -5,6 +5,11 @@ from app.models.base import BaseResponse
 
 
 class FacebookScrapingRequest(BaseModel):
+    bot_id: str = Field(
+        default=None,
+        description="Specific BOT ID",
+        example="123e4567-e89b-12d3-a456-426614174000"
+    )
     keywords: List[str] = Field(description="List of keywords to filter Facebook posts", example=["offer", "discount", "deal"], min_items=1)
     days: int = Field(description="Number of days to look back for posts", example=30, ge=1, le=365)
     
@@ -31,6 +36,7 @@ class FacebookScrapingRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
+                "bot_id": "123e4567-e89b-12d3-a456-426614174000",
                 "keywords": ["offer", "discount", "deal"],
                 "days": 30
             }

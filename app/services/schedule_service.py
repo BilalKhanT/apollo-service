@@ -625,6 +625,7 @@ class SchedulerService:
             from app.utils.orchestrator import orchestrator
             
             result = await orchestrator.run_facebook_scraping(
+                bot_id=schedule.bot_id,
                 task_id=task_id,
                 keywords=schedule.keywords,
                 days=schedule.days,

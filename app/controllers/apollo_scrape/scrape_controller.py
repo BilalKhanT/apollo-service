@@ -42,11 +42,9 @@ class ScrapeController:
         cluster_data: Dict[str, List[str]], 
         crawl_task_id: Optional[str] = None
     ) -> Dict[str, List[str]]:
-        """Simplified cluster validation - just basic checks"""
         if not cluster_data:
             return {}
 
-        # Basic validation of cluster data structure
         validated_data = {}
         for cluster_id, urls in cluster_data.items():
             if not cluster_id or not cluster_id.strip():
@@ -72,11 +70,9 @@ class ScrapeController:
         year_data: Dict[str, List[str]], 
         crawl_task_id: Optional[str] = None
     ) -> Dict[str, List[str]]:
-        """Simplified year validation - just basic checks"""
         if not year_data:
             return {}
 
-        # Basic validation of year data structure
         validated_data = {}
         for year, urls in year_data.items():
             if not year or not year.strip():
@@ -99,12 +95,12 @@ class ScrapeController:
 
     @staticmethod
     async def start_scrape(
+        bot_id: str,
         cluster_data: Dict[str, List[str]],  
         year_data: Dict[str, List[str]] = None,     
         crawl_task_id: Optional[str] = None
     ) -> ScrapingStatus:
 
-        # Basic input validation
         if cluster_data:
             for cluster_id, links in cluster_data.items():
                 if not cluster_id or not cluster_id.strip():

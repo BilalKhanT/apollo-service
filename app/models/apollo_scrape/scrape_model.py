@@ -4,6 +4,11 @@ from datetime import datetime
 from app.models.base import DataResponse, TaskStatus
 
 class ScrapingRequest(BaseModel):
+    bot_id: str = Field(
+        default=None,
+        description="Specific BOT ID",
+        example="123e4567-e89b-12d3-a456-426614174000"
+    )
     cluster_ids: Dict[str, List[str]] = Field(
         default_factory=dict,
         description="Dictionary mapping cluster IDs to their respective links",
@@ -66,6 +71,7 @@ class ScrapingRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
+                "bot_id": "123e4567-e89b-12d3-a456-426614174000",
                 "cluster_ids": {
                     "1.1": ["https://example.com/cluster1_link1", "https://example.com/cluster1_link2"],
                     "1.2": ["https://example.com/cluster2_link1"],
