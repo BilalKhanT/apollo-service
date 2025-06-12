@@ -9,6 +9,8 @@ class ScrapeDataController:
 
     MAX_RETRIES = 3
     
+    # WEB SCRAPER CLEANUP
+    
     @staticmethod
     async def web_scraper_cleanup(task_id: str, scraped: str) -> bool:
         try:
@@ -292,7 +294,9 @@ class ScrapeDataController:
         except Exception as e:
             logger.error(f"Unexpected error during cleanup coordination for task_id {task_id}: {str(e)}")
             return False
-        
+    
+    # FACEBOOK SCRAPER CLEANUP
+
     @staticmethod
     async def cleanup_fb_scraped_files(task_id: str, base_path: Path, scraped: str) -> dict:
         try:
