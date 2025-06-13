@@ -835,8 +835,6 @@ class ScrapeDataController:
                     "zip_file": zip_content.hex()
                 }
 
-                print(payload)
-
                 success = await ScrapeDataController._mock_batch_api_call(payload)
                 
                 if success:
@@ -901,14 +899,34 @@ class ScrapeDataController:
     async def _cleanup_empty_directories(task_id: str, base_path: Path) -> None:
         try:
             scraped_task_dir = base_path / "scraped" / task_id
-            if scraped_task_dir.exists() and not any(scraped_task_dir.iterdir()):
-                scraped_task_dir.rmdir()
-                logger.info(f"Removed empty scraped task directory: {scraped_task_dir}")
+            if scraped_task_dir.exists():
+                for subdir in scraped_task_dir.iterdir():
+                    if subdir.is_dir():
+                        try:
+                            if not any(subdir.iterdir()):
+                                subdir.rmdir()
+                                logger.info(f"Removed empty scraped subdirectory: {subdir}")
+                        except Exception as e:
+                            logger.error(f"Error removing scraped subdirectory {subdir}: {str(e)}")
+
+                if not any(scraped_task_dir.iterdir()):
+                    scraped_task_dir.rmdir()
+                    logger.info(f"Removed empty scraped task directory: {scraped_task_dir}")
 
             download_task_dir = base_path / "downloads" / task_id
-            if download_task_dir.exists() and not any(download_task_dir.iterdir()):
-                download_task_dir.rmdir()
-                logger.info(f"Removed empty download task directory: {download_task_dir}")
+            if download_task_dir.exists():
+                for subdir in download_task_dir.iterdir():
+                    if subdir.is_dir():
+                        try:
+                            if not any(subdir.iterdir()):
+                                subdir.rmdir()
+                                logger.info(f"Removed empty download subdirectory: {subdir}")
+                        except Exception as e:
+                            logger.error(f"Error removing download subdirectory {subdir}: {str(e)}")
+
+                if not any(download_task_dir.iterdir()):
+                    download_task_dir.rmdir()
+                    logger.info(f"Removed empty download task directory: {download_task_dir}")
 
             metadata_files_dir = base_path / "metadata" / task_id / "files"
             if metadata_files_dir.exists() and not any(metadata_files_dir.iterdir()):
