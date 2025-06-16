@@ -9,6 +9,9 @@ try:
 except ImportError:
     logging.warning("python-dotenv not installed, using system environment variables")
 
+# document-bulk url
+DOCUMENT_BULK_URL: str = os.getenv("DOCUMENT_BULK_URL", "https://document-bulk.com/api/v1/")
+
 # Crawler settings
 CRAWLER_USER_AGENT: str = os.getenv("CRAWLER_USER_AGENT", "")
 CRAWLER_TIMEOUT: int = int(os.getenv("CRAWLER_TIMEOUT", "30"))

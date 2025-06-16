@@ -65,7 +65,7 @@ vine==5.1.0
 wcwidth==0.2.13
 wsproto==1.2.0
 datefinder==0.7.3
-pandas==2.1.4
+pandas==2.2.0
 numpy==1.26.2
 tqdm==4.66.1
 PyYAML==6.0.1
