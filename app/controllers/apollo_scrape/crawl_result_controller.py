@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import HTTPException
 import logging
-from app.models.database.apollo_scraper.crawl_result_model import CrawlResult
+from app.models.database.apollo_scraper.crawl_result_model import CrawlResult, UploadStatus
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class CrawlResultController:
             raise HTTPException(status_code=500, detail=f"Failed to list crawl results: {str(e)}")
     
     @staticmethod
-    async def mark_as_scraped(task_id: str) -> bool:
+    async def mark_as_scraped(task_id: str, scrape_id: str) -> bool:
         try:
             crawl_result = await CrawlResult.find_one(CrawlResult.task_id == task_id)
             if not crawl_result:
@@ -65,6 +65,7 @@ class CrawlResultController:
                 return False
             
             crawl_result.is_scraped = True
+            crawl_result.scrape_id = scrape_id
             crawl_result.update_timestamp()
             await crawl_result.save()
             
@@ -73,4 +74,26 @@ class CrawlResultController:
             
         except Exception as e:
             logger.error(f"Error marking crawl result {task_id} as scraped: {str(e)}")
+            return False
+        
+    @staticmethod
+    async def mark_as_uploaded(task_id: str, upload: bool) -> bool:
+        try:
+            crawl_result = await CrawlResult.find_one(CrawlResult.task_id == task_id)
+            if not crawl_result:
+                logger.warning(f"Crawl result not found for task {task_id}")
+                return False
+            if upload:
+                crawl_result.is_uploaded = UploadStatus.COMPLETED
+            else:
+                crawl_result.is_uploaded = UploadStatus.FAILED
+
+            crawl_result.update_timestamp()
+            await crawl_result.save()
+            
+            logger.info(f"Marked crawl result {task_id} as uploaded")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error marking crawl result {task_id} as uploaded: {str(e)}")
             return False

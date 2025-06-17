@@ -1,5 +1,6 @@
 import os
 import time
+import pytz
 import requests
 import re
 import threading
@@ -358,6 +359,8 @@ class FacebookScrapingService:
 
             facebook_url = f"https://www.facebook.com/{post_id}" if post_id != 'unknown' else 'unknown'
 
+            scraped_at = datetime.now(pytz.timezone('Asia/Karachi')).astimezone(pytz.UTC).isoformat().replace('+00:00', 'Z')
+
             metadata_content = f"bot_id: {bot_id}\n"
             metadata_content += f"document_id: {document_id}\n"
             metadata_content += f"document_name: Facebook Post - {category}\n"
@@ -365,6 +368,7 @@ class FacebookScrapingService:
             metadata_content += f"expiry: {expiry_date if expiry_date else 'none'}\n"
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
+            metadata_content += f"scraped_at: {scraped_at}\n"
 
             metadata_file_path = os.path.join(metadata_dir, f"{filename_base}.meta")
             with open(metadata_file_path, "w", encoding="utf-8") as f:

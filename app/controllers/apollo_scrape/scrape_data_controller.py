@@ -20,11 +20,11 @@ class ScrapeDataController:
     # WEB SCRAPER CLEANUP 
     
     @staticmethod
-    async def web_scraper_cleanup(task_id: str, scraped: str) -> bool:
+    async def web_scraper_cleanup(task_id: str) -> bool:
         try:
             base_path = Path("apollo_data")
 
-            files_data = await ScrapeDataController._collect_web_scraped_data(task_id, base_path, scraped)
+            files_data = await ScrapeDataController._collect_web_scraped_data(task_id, base_path)
             
             if not files_data["files"]:
                 logger.info(f"No files found for task_id: {task_id} - skipping batch processing")
@@ -32,7 +32,7 @@ class ScrapeDataController:
                 return True
 
             batch_id = await ScrapeDataController._create_and_send_batch(
-                task_id, files_data["files"], files_data["metadata_list"], scraped, "website"
+                task_id, files_data["files"], files_data["metadata_list"], "website"
             )
 
             if batch_id:
@@ -59,11 +59,11 @@ class ScrapeDataController:
             return False
 
     @staticmethod
-    async def fb_scraper_cleanup(task_id: str, scraped: str) -> bool:
+    async def fb_scraper_cleanup(task_id: str) -> bool:
         try:
             base_path = Path("apollo_data")
 
-            files_data = await ScrapeDataController._collect_fb_scraped_data(task_id, base_path, scraped)
+            files_data = await ScrapeDataController._collect_fb_scraped_data(task_id, base_path)
             
             if not files_data["files"]:
                 logger.info(f"No files found for task_id: {task_id} - skipping batch processing")
@@ -71,7 +71,7 @@ class ScrapeDataController:
                 return True
 
             batch_id = await ScrapeDataController._create_and_send_batch(
-                task_id, files_data["files"], files_data["metadata_list"], scraped, "facebook"
+                task_id, files_data["files"], files_data["metadata_list"], "facebook"
             )
 
             if batch_id:
@@ -98,14 +98,14 @@ class ScrapeDataController:
             return False
 
     @staticmethod
-    async def _collect_web_scraped_data(task_id: str, base_path: Path, scraped: str) -> Dict[str, Any]:
+    async def _collect_web_scraped_data(task_id: str, base_path: Path) -> Dict[str, Any]:
         files = []
         metadata_list = []
         
         try:
             scraped_task, download_task = await asyncio.gather(
-                ScrapeDataController._collect_scraped_files(task_id, base_path, scraped),
-                ScrapeDataController._collect_downloaded_files(task_id, base_path, scraped),
+                ScrapeDataController._collect_scraped_files(task_id, base_path),
+                ScrapeDataController._collect_downloaded_files(task_id, base_path),
                 return_exceptions=True
             )
 
@@ -132,7 +132,7 @@ class ScrapeDataController:
         }
 
     @staticmethod
-    async def _collect_fb_scraped_data(task_id: str, base_path: Path, scraped: str) -> Dict[str, Any]:
+    async def _collect_fb_scraped_data(task_id: str, base_path: Path) -> Dict[str, Any]:
         files = []
         metadata_list = []
         
@@ -170,7 +170,7 @@ class ScrapeDataController:
                             metadata_file = candidate["metadata_file"]
                             keyword_dir = candidate["keyword_dir"]
                             
-                            metadata = await ScrapeDataController._parse_metadata_file(metadata_file, scraped)
+                            metadata = await ScrapeDataController._parse_metadata_file(metadata_file)
                             if metadata:
                                 metadata["task_name"] = keyword_dir.name
                                 metadata["file_type"] = ScrapeDataController._get_file_type(md_file)
@@ -211,7 +211,7 @@ class ScrapeDataController:
         }
 
     @staticmethod
-    async def _collect_scraped_files(task_id: str, base_path: Path, scraped: str) -> Dict[str, Any]:
+    async def _collect_scraped_files(task_id: str, base_path: Path) -> Dict[str, Any]:
         files = []
         metadata_list = []
         
@@ -250,7 +250,7 @@ class ScrapeDataController:
                         metadata_file = candidate["metadata_file"]
                         subdir = candidate["subdir"]
                         
-                        metadata = await ScrapeDataController._parse_metadata_file(metadata_file, scraped)
+                        metadata = await ScrapeDataController._parse_metadata_file(metadata_file)
                         if metadata:
                             metadata["task_name"] = subdir.name
                             metadata["file_type"] = ScrapeDataController._get_file_type(md_file)
@@ -283,7 +283,7 @@ class ScrapeDataController:
         return {"files": files, "metadata_list": metadata_list}
 
     @staticmethod
-    async def _collect_downloaded_files(task_id: str, base_path: Path, scraped: str) -> Dict[str, Any]:
+    async def _collect_downloaded_files(task_id: str, base_path: Path) -> Dict[str, Any]:
         files = []
         metadata_list = []
         
@@ -326,7 +326,7 @@ class ScrapeDataController:
                         metadata_file = candidate["metadata_file"]
                         subdir = candidate["subdir"]
                         
-                        metadata = await ScrapeDataController._parse_metadata_file(metadata_file, scraped)
+                        metadata = await ScrapeDataController._parse_metadata_file(metadata_file)
                         if metadata:
                             metadata["task_name"] = subdir.name
                             metadata["file_type"] = ScrapeDataController._get_file_type(download_file)
@@ -362,8 +362,7 @@ class ScrapeDataController:
     async def _create_and_send_batch(
         task_id: str, 
         files: List[Dict[str, Any]], 
-        metadata_list: List[Dict[str, Any]], 
-        scraped: str,
+        metadata_list: List[Dict[str, Any]],
         source: str
     ) -> Optional[str]:
         if not files:
@@ -378,6 +377,8 @@ class ScrapeDataController:
 
                 documents = []
                 filename_counter = {}
+                scraped = metadata_list[0]["scraped_at"] if metadata_list else "unknown"
+                print(f"Scraped at: {scraped}")
 
                 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     
@@ -403,13 +404,17 @@ class ScrapeDataController:
                             "document_id": metadata["document_id"],
                             "document_name": zip_filename,
                             "document_url": metadata["document_url"],
+                            "expiry": metadata["expiry"],
+                            "source": metadata["source"],
                             "checksum": metadata["checksum"],
                             "file_type": metadata["file_type"],
-                            "task_name": metadata["task_name"]
+                            "task_name": metadata["task_name"],
+                            "scraped_at": metadata["scraped_at"],
                         }
                         documents.append(document)
 
                 metadata_payload = {
+                    "batch_id": task_id,
                     "source": source,
                     "bot_id": metadata_list[0]["bot_id"] if metadata_list else "unknown",
                     "scraped_at": scraped,
@@ -439,49 +444,96 @@ class ScrapeDataController:
         
         for attempt in range(ScrapeDataController.MAX_RETRIES):
             try:
-                url = f"{DOCUMENT_BULK_URL}/documents/bulk-ingest"
+                url = f"{DOCUMENT_BULK_URL}/xiva/faq/api/v1/documents/bulk-ingest"
+                                
+                if zip_path.exists():
+                    logger.info(f"ZIP size: {zip_path.stat().st_size} bytes")
+                if metadata_json_path.exists():
+                    logger.info(f"Metadata size: {metadata_json_path.stat().st_size} bytes")
 
-                files = {
-                    'documents_zip': ('documents.zip', open(zip_path, 'rb'), 'application/zip'),
-                    'metadata_json': ('metadata.json', open(metadata_json_path, 'rb'), 'application/json')
-                }
-                
-                logger.info(f"Submitting batch to API (attempt {attempt + 1}) - task_id: {task_id}")
-                logger.info(f"ZIP size: {zip_path.stat().st_size} bytes")
-                logger.info(f"Metadata size: {metadata_json_path.stat().st_size} bytes")
-
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    response = await client.post(url, files=files)
+                with open(zip_path, 'rb') as zip_file, open(metadata_json_path, 'rb') as metadata_file:
                     
-                    if response.status_code == 200:
-                        result = response.json()
-                        batch_id = result.get("batch_id")
-                        total_docs = result.get("total_documents")
-                        status = result.get("status")
-                        message = result.get("message")
+                    files = {
+                        'documents_zip': ('documents.zip', zip_file, 'application/zip'),
+                        'metadata_json': ('metadata.json', metadata_file, 'application/json')
+                    }
+                    
+                    logger.info(f"Files opened successfully, making HTTP request...")
+
+                    timeout = httpx.Timeout(
+                        connect=30.0,  
+                        read=300.0,   
+                        write=300.0,   
+                        pool=30.0     
+                    )
+                    
+                    async with httpx.AsyncClient(timeout=timeout) as client:
                         
-                        logger.info(f" Batch submitted successfully:")
-                        logger.info(f"   Batch ID: {batch_id}")
-                        logger.info(f"   Total documents: {total_docs}")
-                        logger.info(f"   Status: {status}")
-                        logger.info(f"   Message: {message}")
+                        logger.info(f"Sending POST request...")
+                        response = await client.post(url, files=files)
                         
-                        return batch_id
-                    else:
-                        error_text = response.text
-                        logger.error(f" API error {response.status_code}: {error_text}")
+                        logger.info(f"Response received - Status: {response.status_code}")
+                        logger.info(f"Response headers: {dict(response.headers)}")
                         
-            except httpx.RequestError as e:
-                logger.error(f"HTTP error (attempt {attempt + 1}): {str(e)}")
-            except Exception as e:
-                logger.error(f"Unexpected error (attempt {attempt + 1}): {str(e)}")
-            finally:
-                for file_tuple in files.values():
-                    if hasattr(file_tuple[1], 'close'):
-                        file_tuple[1].close()
+                        if response.status_code == 200:
+                            try:
+                                result = response.json()
+                                batch_id = result.get("batch_id")
+                                total_docs = result.get("total_documents")
+                                status = result.get("status")
+                                message = result.get("message")
+                                
+                                logger.info(f"   Batch submitted successfully:")
+                                logger.info(f"   Batch ID: {batch_id}")
+                                logger.info(f"   Total documents: {total_docs}")
+                                logger.info(f"   Status: {status}")
+                                logger.info(f"   Message: {message}")
+                                print(batch_id)
+                                return batch_id
+                                
+                            except json.JSONDecodeError as json_error:
+                                logger.error(f"Failed to parse JSON response: {json_error}")
+                                logger.error(f"Raw response text: {response.text[:1000]}")
+                                
+                        elif response.status_code == 400:
+                            logger.error(f"Bad Request (400) - Check file format and API requirements")
+                            logger.error(f"Response: {response.text}")
+                            
+                        elif response.status_code == 422:
+                            logger.error(f"Unprocessable Entity (422) - Validation failed")
+                            logger.error(f"Response: {response.text}")
+                            
+                        elif response.status_code == 500:
+                            logger.error(f"Internal Server Error (500) - Server-side issue")
+                            logger.error(f"Response: {response.text}")
+                            
+                        else:
+                            logger.error(f"API error {response.status_code}")
+                            logger.error(f"Response: {response.text[:1000]}")
+                            
+            except httpx.TimeoutException as timeout_error:
+                logger.error(f"Timeout error (attempt {attempt + 1}): {timeout_error}")
+                
+            except httpx.ConnectError as connect_error:
+                logger.error(f"Connection error (attempt {attempt + 1}): {connect_error}")
+                
+            except httpx.RequestError as request_error:
+                logger.error(f"HTTP request error (attempt {attempt + 1}): {request_error}")
+                
+            except FileNotFoundError as file_error:
+                logger.error(f"File not found (attempt {attempt + 1}): {file_error}")
+                return None  
+                
+            except Exception as unexpected_error:
+                logger.error(f"Unexpected error (attempt {attempt + 1}): {type(unexpected_error).__name__}")
+                logger.error(f"Error details: {unexpected_error}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
 
             if attempt < ScrapeDataController.MAX_RETRIES - 1:
-                await asyncio.sleep(5)
+                wait_time = 5 * (attempt + 1)
+                logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                await asyncio.sleep(wait_time)
         
         logger.error(f"Failed to submit batch after {ScrapeDataController.MAX_RETRIES} attempts")
         return None
@@ -490,7 +542,7 @@ class ScrapeDataController:
     async def _wait_for_batch_completion(batch_id: str) -> bool:        
         for check_count in range(ScrapeDataController.MAX_STATUS_CHECKS):
             try:
-                url = f"{DOCUMENT_BULK_URL}/documents/bulk-ingest/{batch_id}"
+                url = f"{DOCUMENT_BULK_URL}/xiva/faq/api/v1/documents/bulk-ingest/{batch_id}"
                 
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.get(url)
@@ -521,7 +573,7 @@ class ScrapeDataController:
                             else:
                                 logger.error(f"Batch completed with {failed_docs} failures: {batch_id}")
                                 logger.error(f"Error: {error_message}")
-                                return True
+                                return False
                                 
                         elif status == "failed":
                             logger.error(f" Batch processing failed: {batch_id}")
@@ -665,7 +717,7 @@ class ScrapeDataController:
             logger.error(f"Error cleaning up empty Facebook directories: {str(e)}")
 
     @staticmethod
-    async def _parse_metadata_file(metadata_file_path: Path, scraped: str) -> Optional[Dict[str, Any]]:
+    async def _parse_metadata_file(metadata_file_path: Path) -> Optional[Dict[str, Any]]:
         try:
             if not metadata_file_path.exists():
                 logger.warning(f"Metadata file does not exist: {metadata_file_path}")
@@ -716,7 +768,7 @@ class ScrapeDataController:
                 "expiry": metadata.get("expiry", "none"),
                 "source": metadata.get("source", "website"),
                 "checksum": metadata.get("checksum", ""),
-                "scraped_at": scraped
+                "scraped_at": metadata.get("scraped_at", ""),
             }
             
             logger.debug(f"Successfully parsed metadata for: {metadata_file_path.name}")

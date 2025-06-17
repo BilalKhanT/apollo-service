@@ -19,7 +19,8 @@ from .apollo_scrape.scrape_model import (
     ScrapingProgress,
     ScrapingSummary,
     ScrapingStatus,
-    ScrapingResponse
+    ScrapingResponse,
+    ScrapeCleanupResponse
 )
 from .apollo_scrape.cluster_model import (
     Cluster,
@@ -85,6 +86,7 @@ from app.models.apollo_scrape.user_pref_models import (
 )
 
 from .database.apollo_scraper.crawl_result_model import CrawlResult
+from .database.apollo_scraper.crawl_result_model import UploadStatus
 from .database.apollo_scraper.crawl_schedule_model import CrawlSchedule
 from .database.restaurant_deal.restaurant_result_model import DealResult
 from .database.restaurant_deal.deal_schedule_model import DealScrapeSchedule
@@ -115,6 +117,7 @@ __all__ = [
     'ScrapingSummary',
     'ScrapingStatus',
     'ScrapingResponse',
+    'ScrapeCleanupResponse',
     
     # Cluster models
     'Cluster',
@@ -148,6 +151,7 @@ __all__ = [
     'FacebookResult',
     'FacebookScrapeSchedule',
     'UserPreference',
+    'UploadStatus',
 
     # Restaurant Deal models
     'DealScrapingRequest',

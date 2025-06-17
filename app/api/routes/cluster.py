@@ -135,9 +135,11 @@ async def get_crawl_results(
             
             summary_results.append({
                 "task_id": result.task_id,
+                "scrape_id": result.scrape_id,
                 "link_found": result.link_found,
                 "pages_scraped": result.pages_scraped,
                 "is_scraped": result.is_scraped,
+                "is_uploaded": result.is_uploaded,
                 "error": result.error,
                 "created_at": created_at_karachi,
                 "updated_at": updated_at_karachi,

@@ -158,7 +158,7 @@ class TaskManager:
             'message': message
         }
         
-        self.store_log(task_id, log_entry)
+        # self.store_log(task_id, log_entry)
 
         self._safe_publish_log_update(task_id, [log_entry])
             

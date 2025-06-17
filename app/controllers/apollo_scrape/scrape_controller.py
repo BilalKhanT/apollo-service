@@ -1,8 +1,8 @@
-from typing import Dict, List, Optional, Set
-from fastapi import HTTPException
+from typing import Any, Dict, List, Optional, Set
+from fastapi import HTTPException, status
 from app.utils.task_manager import task_manager
 from app.utils.realtime_publisher import realtime_publisher
-from app.models.apollo_scrape.scrape_model import ScrapingStatus
+from app.models.apollo_scrape.scrape_model import ScrapeCleanupResponse, ScrapingStatus
 from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
 from app.controllers.apollo_scrape.user_pref_controller import UserPreferenceController
 import logging
@@ -207,3 +207,104 @@ class ScrapeController:
             files_downloaded=files_downloaded,
             error=task_status.get("error")
         )
+    
+    @staticmethod
+    async def validate_cleanup_task(task_id: str) -> Dict[str, Any]:
+        try:
+            task_status = task_manager.get_task_status(task_id)
+            
+            if not task_status:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Task {task_id} not found"
+                )
+
+            if task_status.get("type") != "scrape":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Task {task_id} is not a web scraping task"
+                )
+
+            current_status = task_status.get("status")
+            if current_status not in ["completed", "stopped"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Task {task_id} is in '{current_status}' state and cannot be cleaned up. Only completed or stopped tasks can be cleaned up."
+                )
+
+            task_params = task_status.get("params", {})
+            task_result = task_status.get("result", {})
+
+            cluster_data = task_params.get("cluster_data", {})
+            year_data = task_params.get("year_data", {})
+            total_clusters = task_params.get("total_clusters", len(cluster_data) if cluster_data else 0)
+            total_years = task_params.get("total_years", len(year_data) if year_data else 0)
+
+            scrape_results = task_result.get("scrape_results", {})
+            download_results = task_result.get("download_results", {})
+            
+            pages_scraped = scrape_results.get("pages_scraped", 0) if isinstance(scrape_results, dict) else 0
+            files_downloaded = download_results.get("files_downloaded", 0) if isinstance(download_results, dict) else 0
+
+            crawl_task_id = task_params.get("crawl_task_id")
+            
+            return {
+                "task_id": task_id,
+                "status": current_status,
+                "total_clusters": total_clusters,
+                "total_years": total_years,
+                "pages_scraped": pages_scraped,
+                "files_downloaded": files_downloaded,
+                "crawl_task_id": crawl_task_id,
+                "cluster_names": list(cluster_data.keys()) if cluster_data else [],
+                "year_names": list(year_data.keys()) if year_data else [],
+                "has_scrape_data": pages_scraped > 0,
+                "has_download_data": files_downloaded > 0
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating cleanup task {task_id}: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to validate cleanup task: {str(e)}"
+            )
+
+    @staticmethod
+    async def start_web_cleanup(original_task_id: str) -> ScrapeCleanupResponse:
+        try:
+            task_info = await ScrapeController.validate_cleanup_task(original_task_id)
+
+            cleanup_task_id = task_manager.create_task(
+                task_type="web_cleanup",
+                params={
+                    "original_task_id": original_task_id,
+                    "cleanup_type": "web",
+                    "original_task_info": task_info
+                }
+            )
+            
+            task_status = task_manager.get_task_status(cleanup_task_id)
+
+            try:
+                await realtime_publisher.start_publishing(cleanup_task_id, interval=2.0)
+                logger.info(f"Started real-time publishing for web cleanup task {cleanup_task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to start real-time publishing for cleanup task {cleanup_task_id}: {str(e)}")
+            
+            return ScrapeCleanupResponse(
+                success=True,
+                message=f"Web cleanup started for task {original_task_id}",
+                cleanup_task_id=cleanup_task_id,
+                original_task_id=original_task_id,
+        )
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error starting web cleanup: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to start web cleanup: {str(e)}"
+            )

@@ -1,5 +1,6 @@
 import os
 import json
+import pytz
 import requests
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -229,6 +230,8 @@ class FileDownloader:
             checksum = self.generate_checksum(file_path)
             document_id = str(uuid.uuid4())
 
+            scraped_at = datetime.now(pytz.timezone('Asia/Karachi')).astimezone(pytz.UTC).isoformat().replace('+00:00', 'Z')
+
             metadata_content = f"bot_id: {bot_id}\n"
             metadata_content += f"document_id: {document_id}\n"
             metadata_content += f"document_name: {document_name}\n"
@@ -236,6 +239,7 @@ class FileDownloader:
             metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
+            metadata_content += f"scraped_at: {scraped_at}\n"
 
             metadata_file_path = os.path.join(self.files_metadata_dir, f"{filename_base}.meta")
             with open(metadata_file_path, "w", encoding="utf-8") as f:

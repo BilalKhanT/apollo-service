@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from beanie import Document
 from pydantic import BaseModel, Field
+from enum import Enum
 
+class UploadStatus(str, Enum):
+    INITIAL = "Initial"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
 
 class FacebookPostData(BaseModel):
     post_id: str
@@ -14,6 +19,7 @@ class FacebookPostData(BaseModel):
 
 class FacebookResult(Document):
     task_id: str = Field(..., unique=True, index=True)
+    is_uploaded: UploadStatus = Field(default=UploadStatus.INITIAL, description="Status of the upload")
     keywords_requested: List[str] = Field(description="Keywords that were requested for scraping")
     days_requested: int = Field(description="Number of days that were requested for scraping")
     posts_processed: int = Field(description="Total posts processed")
@@ -37,6 +43,7 @@ class FacebookResult(Document):
     def get_summary(self) -> Dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "is_uploaded": self.is_uploaded,
             "keywords_requested": self.keywords_requested,
             "days_requested": self.days_requested,
             "posts_processed": self.posts_processed,
@@ -52,6 +59,7 @@ class FacebookResult(Document):
     def get_minimal_summary(self) -> Dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "is_uploaded": self.is_uploaded,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
             "keywords_requested": self.keywords_requested,

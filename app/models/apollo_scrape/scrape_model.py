@@ -195,3 +195,22 @@ class ScrapingResponse(DataResponse):
                 }
             }
         }
+
+class ScrapeCleanupResponse(BaseModel):
+    success: bool = Field(description="Whether cleanup was started successfully", example=True)
+    message: str = Field(description="Status message", example="Web cleanup started for task 456e7890")
+    cleanup_task_id: str = Field(description="New cleanup task identifier", example="789e0123-e89b-12d3-a456-426614174000")
+    original_task_id: str = Field(description="Original task identifier", example="456e7890-e89b-12d3-a456-426614174000")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Web cleanup started for task 456e7890-e89b-12d3-a456-426614174000",
+                "cleanup_task_id": "789e0123-e89b-12d3-a456-426614174000",
+                "original_task_id": "456e7890-e89b-12d3-a456-426614174000",
+            }
+        }

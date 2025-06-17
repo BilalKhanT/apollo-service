@@ -63,6 +63,7 @@ class FacebookScrapingResponse(BaseResponse):
 
 class FacebookResultSummaryMinimal(BaseModel):
     task_id: str = Field(description="Task identifier")
+    is_uploaded: str = Field(description="Whether the results have been uploaded")
     created_at: datetime = Field(description="When the task was started")
     completed_at: datetime = Field(description="When the task was completed")
     keywords_requested: List[str] = Field(description="Keywords that were requested")
@@ -77,6 +78,7 @@ class FacebookResultSummaryMinimal(BaseModel):
         json_schema_extra = {
             "example": {
                 "task_id": "c94851e8-3547-4d2c-bfc9-17f4c3d6d838",
+                "is_uploaded": "Initial",
                 "created_at": "2025-05-27T14:58:44.857956",
                 "completed_at": "2025-05-27T14:59:25.236544",
                 "keywords_requested": ["offer", "discount", "deal"],
@@ -94,6 +96,7 @@ class FacebookResultSummaryMinimal(BaseModel):
 
 class FacebookResultSummary(BaseModel):
     task_id: str = Field(description="Task identifier")
+    is_uploaded: str = Field(description="Whether the results have been uploaded")
     keywords_requested: List[str] = Field(description="Keywords that were requested")
     days_requested: int = Field(description="Number of days that were requested")
     posts_processed: int = Field(description="Total posts processed")

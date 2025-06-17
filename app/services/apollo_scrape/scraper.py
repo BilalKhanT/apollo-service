@@ -13,6 +13,8 @@ import traceback
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Tuple, Callable
+
+import pytz
 from app.utils.config import TAGS_TO_REMOVE, CLASSES_TO_REMOVE, DETECTED_BANK_NAME
 
 class ClusterScraper:
@@ -350,6 +352,8 @@ class ClusterScraper:
             checksum = self.generate_checksum(content)
             document_id = str(uuid.uuid4())
 
+            scraped_at = datetime.now(pytz.timezone('Asia/Karachi')).astimezone(pytz.UTC).isoformat().replace('+00:00', 'Z')
+
             metadata_content = f"bot_id: {bot_id}\n"
             metadata_content += f"document_id: {document_id}\n"
             metadata_content += f"document_name: {document_name}\n"
@@ -357,6 +361,7 @@ class ClusterScraper:
             metadata_content += f"expiry: {expiry if expiry else 'none'}\n"
             metadata_content += f"source: {source}\n"
             metadata_content += f"checksum: {checksum}\n"
+            metadata_content += f"scraped_at: {scraped_at}\n"
 
             metadata_file_path = os.path.join(self.document_metadata_dir, f"{filename_base}.meta")
             with open(metadata_file_path, "w", encoding="utf-8") as f:

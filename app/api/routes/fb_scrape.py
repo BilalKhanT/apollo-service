@@ -84,17 +84,13 @@ async def run_facebook_scraping_background(
     task_id: str,
     keywords: List[str],
     days: int,
-    # access_token: str,
-    # page_id: str
 ):
     try:
         await orchestrator.run_facebook_scraping(
             bot_id=bot_id,
             task_id=task_id,
             keywords=keywords,
-            days=days,
-            # access_token=access_token,
-            # page_id=page_id
+            days=days
         )
     except Exception as e:
         logger.error(f"Error in background Facebook scraping task {task_id}: {str(e)}")
@@ -203,9 +199,6 @@ async def get_all_facebook_results(
 async def get_facebook_result_by_task_id(
     task_id: str = Path(..., description="Task ID of the Facebook scraping operation")
 ):
-    """
-    Get the result of a specific Facebook scraping task by task ID.
-    """
     result = await FacebookScrapeController.get_facebook_result_by_task_id(task_id)
     
     if not result:
@@ -215,3 +208,77 @@ async def get_facebook_result_by_task_id(
         )
     
     return result
+
+@router.post(
+    "/{task_id}/cleanup",
+    response_model=FacebookScrapingResponse,
+    responses={
+        200: {
+            "description": "Cleanup task started successfully",
+            "model": FacebookScrapingResponse
+        },
+        404: {
+            "description": "Task not found",
+            "model": ErrorResponse
+        },
+        400: {
+            "description": "Invalid request parameters",
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Start cleanup for a Facebook scraping task",
+    description="Initiates cleanup and data processing for a completed Facebook scraping task."
+)
+async def start_facebook_cleanup(
+    task_id: str,
+    background_tasks: BackgroundTasks
+) -> FacebookScrapingResponse:
+    try:
+        task_info = await FacebookScrapeController.validate_cleanup_task(task_id)
+
+        cleanup_task_info = await FacebookScrapeController.start_facebook_cleanup(task_id)
+        
+        background_tasks.add_task(
+            run_facebook_cleanup_background,
+            original_task_id=task_id,
+            cleanup_task_id=cleanup_task_info["task_id"]
+        )
+        
+        return FacebookScrapingResponse(
+            success=True,
+            message=f"Facebook cleanup started for task {task_id}",
+            task_id=cleanup_task_info["task_id"],
+            keywords_requested=task_info.get("keywords_requested", []),
+            days_requested=task_info.get("days_requested", 0)
+        )
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error starting Facebook cleanup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid request parameters: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error starting Facebook cleanup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start Facebook cleanup task: {str(e)}"
+        )
+
+async def run_facebook_cleanup_background(
+    original_task_id: str,
+    cleanup_task_id: str
+):
+    try:
+        await orchestrator.run_facebook_cleanup(
+            original_task_id=original_task_id,
+            cleanup_task_id=cleanup_task_id
+        )
+    except Exception as e:
+        logger.error(f"Error in background Facebook cleanup task {cleanup_task_id}: {str(e)}")

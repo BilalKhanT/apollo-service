@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from typing import Dict, List, Optional
 import logging
 from app.models.apollo_scrape.scrape_model import (
+    ScrapeCleanupResponse,
     ScrapingRequest, 
     ScrapingResponse
 )
@@ -139,3 +140,62 @@ async def get_scrape_status(task_id: str) -> ScrapingResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve scraping status: {str(e)}"
         )
+    
+@router.post(
+    "/web/{task_id}/cleanup",
+    response_model=ScrapeCleanupResponse, 
+    responses={
+        200: {
+            "description": "Web cleanup task started successfully"
+        },
+        404: {
+            "description": "Task not found",
+            "model": ErrorResponse
+        },
+        400: {
+            "description": "Invalid request parameters", 
+            "model": ErrorResponse
+        },
+        500: {
+            "description": "Internal server error",
+            "model": ErrorResponse
+        }
+    },
+    summary="Start cleanup for a web scraping task",
+    description="Initiates cleanup and data processing for a completed web scraping task."
+)
+async def start_web_cleanup(
+    task_id: str,
+    background_tasks: BackgroundTasks
+) -> ScrapeCleanupResponse:
+    try:
+        cleanup_task_info = await ScrapeController.start_web_cleanup(task_id)
+        
+        background_tasks.add_task(
+            run_web_cleanup_background,
+            original_task_id=task_id,
+            cleanup_task_id=cleanup_task_info["task_id"]
+        )
+        
+        return cleanup_task_info
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting web cleanup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start web cleanup task: {str(e)}"
+        )
+
+async def run_web_cleanup_background(
+    original_task_id: str,
+    cleanup_task_id: str
+):
+    try:
+        await orchestrator.run_web_cleanup(
+            original_task_id=original_task_id,
+            cleanup_task_id=cleanup_task_id
+        )
+    except Exception as e:
+        logger.error(f"Error in background web cleanup task {cleanup_task_id}: {str(e)}")

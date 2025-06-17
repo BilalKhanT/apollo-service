@@ -6,15 +6,17 @@ import traceback
 import asyncio
 from typing import Dict, Any, List, Optional
 import json
-
+from pathlib import Path
+import httpx
 import pytz
+from app.controllers.fb_scrape.fb_scrape_controller import FacebookScrapeController
 from app.services.fb_scrape.fb_scrape_service import FacebookScrapingService
 from app.utils.task_manager import task_manager
 from app.utils.config import (
     CRAWLER_USER_AGENT, CRAWLER_TIMEOUT, CRAWLER_NUM_WORKERS,
     CRAWLER_DELAY_BETWEEN_REQUESTS, CRAWLER_INACTIVITY_TIMEOUT,
     CRAWLER_SAVE_INTERVAL, CRAWLER_RESPECT_ROBOTS_TXT,
-    DEFAULT_URL_PATTERNS_TO_IGNORE, FILE_EXTENSIONS,
+    DEFAULT_URL_PATTERNS_TO_IGNORE, DOCUMENT_BULK_URL, FILE_EXTENSIONS,
     SOCIAL_MEDIA_KEYWORDS, BANK_KEYWORDS, CLUSTER_MIN_SIZE,
     CLUSTER_PATH_DEPTH, CLUSTER_SIMILARITY_THRESHOLD,
     EXPIRY_DAYS,MAX_DOWNLOAD_WORKERS, DATA_DIR, ACCESS_TOKEN, PAGE_ID
@@ -29,6 +31,7 @@ from app.services.restaurant_deal.deal_scrape_service import DealScrapperService
 from app.controllers.apollo_scrape.crawl_result_controller import CrawlResultController
 from app.controllers.restaurant_deal.deal_scrape_controller import DealScrapeController
 from app.controllers.apollo_scrape.scrape_data_controller import ScrapeDataController
+from app.models.database.apollo_scraper.crawl_result_model import UploadStatus
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -636,7 +639,7 @@ class ApolloOrchestrator:
 
                 # Mark as scraped if crawl task provided
                 if crawl_task_id:
-                    await CrawlResultController.mark_as_scraped(crawl_task_id)
+                    await CrawlResultController.mark_as_scraped(crawl_task_id, task_id)
 
                 scrape_output_dir = os.path.join(self.scrape_dir, f"{task_id}")
                 metadata_output_dir = os.path.join(self.metadata_dir, f"{task_id}")
@@ -792,12 +795,13 @@ class ApolloOrchestrator:
             self.publish_log(task_id, "Starting cleanup of scraped data and downloaded files...", "info")
 
             try:
-                scraped_at = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')
-                cleanup_success = await ScrapeDataController.web_scraper_cleanup(task_id=task_id, scraped=scraped_at)
+                cleanup_success = await ScrapeDataController.web_scraper_cleanup(task_id=task_id)
                 
                 if cleanup_success:
+                    await CrawlResultController.mark_as_uploaded(task_id=crawl_task_id, upload=True)
                     self.publish_log(task_id, "Successfully cleaned up all files and sent to Momento", "info")
                 else:
+                    await CrawlResultController.mark_as_uploaded(task_id=crawl_task_id, upload=False)
                     self.publish_log(task_id, "Cleanup completed with some warnings - check logs for details", "warning")
                     
             except Exception as cleanup_error:
@@ -1433,11 +1437,12 @@ class ApolloOrchestrator:
                 "info"
             )
 
+            is_uploaded = False
             try:
-                scraped_at = datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')
-                cleanup_success = await ScrapeDataController.fb_scraper_cleanup(task_id=task_id, scraped=scraped_at)
+                cleanup_success = await ScrapeDataController.fb_scraper_cleanup(task_id=task_id)
                 
                 if cleanup_success:
+                    is_uploaded = True
                     self.publish_log(task_id, "Successfully cleaned up all files and sent to Momento", "info")
                 else:
                     self.publish_log(task_id, "Cleanup completed with some warnings - check logs for details", "warning")
@@ -1483,6 +1488,7 @@ class ApolloOrchestrator:
 
                 await self.save_facebook_result(
                     task_id=task_id,
+                    is_uploaded=is_uploaded,
                     keywords_requested=keywords_requested,
                     days_requested=days_requested,
                     posts_processed=posts_processed,
@@ -1650,6 +1656,7 @@ class ApolloOrchestrator:
     async def save_facebook_result(
         self,
         task_id: str,
+        is_uploaded: bool,
         keywords_requested: List[str],
         days_requested: int,
         posts_processed: int,
@@ -1716,6 +1723,7 @@ class ApolloOrchestrator:
 
             facebook_result = FacebookResult(
                 task_id=task_id,
+                is_uploaded=UploadStatus.COMPLETED if is_uploaded else UploadStatus.FAILED,
                 keywords_requested=keywords_requested,
                 days_requested=days_requested,
                 posts_processed=posts_processed,
@@ -1751,5 +1759,588 @@ class ApolloOrchestrator:
             import traceback
             self.logger.error(f"Full traceback: {traceback.format_exc()}")
             raise Exception(f"Failed to save Facebook result: {str(e)}")
+
+    # Clean Up Methods
+    async def run_facebook_cleanup(
+        self,
+        original_task_id: str,
+        cleanup_task_id: str
+    ) -> Dict[str, Any]:        
+        await self._start_realtime_publishing(cleanup_task_id, interval=2.0)
+
+        task_manager.update_task_status(
+            cleanup_task_id,
+            status="initializing",
+            progress=0.0
+        )
+
+        self.publish_log(cleanup_task_id, f"Starting Facebook cleanup for original task {original_task_id}", "info")
+        
+        try:
+            task_manager.update_task_status(
+                cleanup_task_id,
+                status="validating",
+                progress=5.0
+            )
+
+            self.publish_log(cleanup_task_id, f"Validating original task {original_task_id}", "info")
+            
+            base_path = Path("apollo_data")
+            facebook_task_path = base_path / "facebook" / original_task_id
+            
+            if not facebook_task_path.exists():
+                error_msg = f"No data found for Facebook task {original_task_id}"
+                self.publish_log(cleanup_task_id, error_msg, "error")
+                
+                await self._stop_realtime_publishing(cleanup_task_id)
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(cleanup_task_id)
+
+            task_manager.update_task_status(
+                cleanup_task_id,
+                status="collecting",
+                progress=15.0
+            )
+
+            self.publish_log(cleanup_task_id, "Collecting Facebook scraped files for processing...", "info")
+            
+            try:
+                files_data = await self._collect_fb_files_with_progress(original_task_id, cleanup_task_id)
+                
+                files_count = len(files_data["files"])
+                self.publish_log(cleanup_task_id, f"Collected {files_count} files for processing", "info")
+                
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    progress=35.0,
+                    result={
+                        "files_collected": files_count,
+                        "collection_completed": True
+                    }
+                )
+
+                if files_count == 0:
+                    self.publish_log(cleanup_task_id, "No files found to process, performing directory cleanup only", "info")
+                    
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="cleaning_directories",
+                        progress=80.0
+                    )
+
+                    await ScrapeDataController._cleanup_empty_fb_directories(original_task_id, base_path)
+                    
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="completed",
+                        progress=100.0,
+                        result={
+                            **task_manager.get_task_status(cleanup_task_id)["result"],
+                            "files_processed": 0,
+                            "cleanup_completed": True,
+                            "directory_cleanup_only": True
+                        }
+                    )
+                    
+                    self.publish_log(cleanup_task_id, "Facebook cleanup completed (directory cleanup only)", "info")
+                    await self._stop_realtime_publishing(cleanup_task_id)
+                    return task_manager.get_task_status(cleanup_task_id)
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="processing",
+                    progress=45.0
+                )
+
+                self.publish_log(cleanup_task_id, "Creating batch for document processing...", "info")
+                
+                batch_id = await self._create_batch_with_progress(
+                    cleanup_task_id, 
+                    original_task_id, 
+                    files_data["files"], 
+                    files_data["metadata_list"], 
+                    "facebook"
+                )
+
+                if not batch_id:
+                    error_msg = "Failed to create and submit batch for processing"
+                    self.publish_log(cleanup_task_id, error_msg, "error")
+                    
+                    await self._stop_realtime_publishing(cleanup_task_id)
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="failed",
+                        error=error_msg
+                    )
+                    return task_manager.get_task_status(cleanup_task_id)
+
+                self.publish_log(cleanup_task_id, f"Batch {batch_id} submitted successfully", "info")
+                
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    progress=65.0,
+                    result={
+                        **task_manager.get_task_status(cleanup_task_id)["result"],
+                        "batch_id": batch_id,
+                        "batch_submitted": True
+                    }
+                )
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="uploading",
+                    progress=70.0
+                )
+
+                self.publish_log(cleanup_task_id, f"Waiting for batch {batch_id} to complete processing...", "info")
+                
+                success = await self._wait_for_batch_with_progress(cleanup_task_id, batch_id)
+                
+                if not success:
+                    error_msg = f"Batch {batch_id} processing failed"
+                    self.publish_log(cleanup_task_id, error_msg, "error")
+                    
+                    await self._stop_realtime_publishing(cleanup_task_id)
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="failed",
+                        error=error_msg
+                    )
+                    return task_manager.get_task_status(cleanup_task_id)
+
+                self.publish_log(cleanup_task_id, f"Batch {batch_id} processed successfully", "info")
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="cleaning_files",
+                    progress=85.0
+                )
+
+                self.publish_log(cleanup_task_id, "Cleaning up processed files...", "info")
+
+                await FacebookScrapeController.mark_as_uploaded(task_id=original_task_id, upload=True)
+                
+                cleanup_result = await ScrapeDataController._cleanup_processed_fb_files(
+                    original_task_id, base_path, files_data["files"]
+                )
+                
+                await ScrapeDataController._cleanup_empty_fb_directories(original_task_id, base_path)
+                
+                files_processed = cleanup_result.get("deleted_count", 0)
+                self.publish_log(cleanup_task_id, f"Successfully cleaned up {files_processed} files", "info")
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="completed",
+                    progress=100.0,
+                    result={
+                        **task_manager.get_task_status(cleanup_task_id)["result"],
+                        "files_processed": files_processed,
+                        "cleanup_completed": True,
+                        "batch_processing_successful": True
+                    }
+                )
+                
+                self.publish_log(cleanup_task_id, f"Facebook cleanup completed successfully for task {original_task_id}", "info")
+                
+                await self._stop_realtime_publishing(cleanup_task_id)
+                return task_manager.get_task_status(cleanup_task_id)
+                
+            except Exception as cleanup_error:
+                error_msg = f"Cleanup operation failed: {str(cleanup_error)}"
+                self.publish_log(cleanup_task_id, error_msg, "error")
+                self.publish_log(cleanup_task_id, traceback.format_exc(), "error")
+                
+                await self._stop_realtime_publishing(cleanup_task_id)
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(cleanup_task_id)
+                
+        except Exception as e:
+            error_msg = f"Error in Facebook cleanup workflow: {str(e)}"
+            self.publish_log(cleanup_task_id, error_msg, "error")
+            self.publish_log(cleanup_task_id, traceback.format_exc(), "error")
+            
+            await self._stop_realtime_publishing(cleanup_task_id)
+            task_manager.update_task_status(
+                cleanup_task_id,
+                status="failed",
+                error=error_msg
+            )
+            return task_manager.get_task_status(cleanup_task_id)
+
+    async def run_web_cleanup(
+        self,
+        original_task_id: str,
+        cleanup_task_id: str,
+    ) -> Dict[str, Any]:        
+        await self._start_realtime_publishing(cleanup_task_id, interval=2.0)
+
+        task_manager.update_task_status(
+            cleanup_task_id,
+            status="initializing", 
+            progress=0.0
+        )
+
+        self.publish_log(cleanup_task_id, f"Starting web cleanup for original task {original_task_id}", "info")
+        
+        try:
+            task_manager.update_task_status(
+                cleanup_task_id,
+                status="validating",
+                progress=5.0
+            )
+
+            self.publish_log(cleanup_task_id, f"Validating original task {original_task_id}", "info")
+            
+            base_path = Path("apollo_data")
+            scraped_path = base_path / "scraped" / original_task_id
+            downloads_path = base_path / "downloads" / original_task_id
+            
+            if not scraped_path.exists() and not downloads_path.exists():
+                error_msg = f"No data found for web scraping task {original_task_id}"
+                self.publish_log(cleanup_task_id, error_msg, "error")
+                
+                await self._stop_realtime_publishing(cleanup_task_id)
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="failed",
+                    error=error_msg
+                )
+                return task_manager.get_task_status(cleanup_task_id)
+
+            task_manager.update_task_status(
+                cleanup_task_id,
+                status="collecting",
+                progress=15.0
+            )
+
+            self.publish_log(cleanup_task_id, "Collecting web scraped files for processing...", "info")
+            
+            try:                
+                files_data = await self._collect_web_files_with_progress(original_task_id, cleanup_task_id)
+                
+                files_count = len(files_data["files"])
+                self.publish_log(cleanup_task_id, f"Collected {files_count} files for processing", "info")
+                
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    progress=35.0,
+                    result={
+                        "files_collected": files_count,
+                        "collection_completed": True
+                    }
+                )
+
+                if files_count == 0:
+                    self.publish_log(cleanup_task_id, "No files found to process, performing directory cleanup only", "info")
+                    
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="cleaning_directories",
+                        progress=80.0
+                    )
+
+                    await ScrapeDataController._cleanup_empty_directories(original_task_id, base_path)
+                    
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="completed",
+                        progress=100.0,
+                        result={
+                            **task_manager.get_task_status(cleanup_task_id)["result"],
+                            "files_processed": 0,
+                            "cleanup_completed": True,
+                            "directory_cleanup_only": True
+                        }
+                    )
+                    
+                    self.publish_log(cleanup_task_id, "Web cleanup completed (directory cleanup only)", "info")
+                    await self._stop_realtime_publishing(cleanup_task_id)
+                    return task_manager.get_task_status(cleanup_task_id)
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="processing",
+                    progress=45.0
+                )
+
+                self.publish_log(cleanup_task_id, "Creating batch for document processing...", "info")
+                
+                batch_id = await self._create_batch_with_progress(
+                    cleanup_task_id,
+                    original_task_id, 
+                    files_data["files"], 
+                    files_data["metadata_list"],
+                    "website"
+                )
+
+                if not batch_id:
+                    error_msg = "Failed to create and submit batch for processing"
+                    self.publish_log(cleanup_task_id, error_msg, "error")
+                    
+                    await self._stop_realtime_publishing(cleanup_task_id)
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="failed",
+                        error=error_msg
+                    )
+                    return task_manager.get_task_status(cleanup_task_id)
+
+                self.publish_log(cleanup_task_id, f"Batch {batch_id} submitted successfully", "info")
+                
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    progress=65.0,
+                    result={
+                        **task_manager.get_task_status(cleanup_task_id)["result"],
+                        "batch_id": batch_id,
+                        "batch_submitted": True
+                    }
+                )
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="uploading",
+                    progress=70.0
+                )
+
+                self.publish_log(cleanup_task_id, f"Waiting for batch {batch_id} to complete processing...", "info")
+                
+                success = await self._wait_for_batch_with_progress(cleanup_task_id, batch_id)
+                
+                if not success:
+                    error_msg = f"Batch {batch_id} processing failed"
+                    self.publish_log(cleanup_task_id, error_msg, "error")
+                    
+                    await self._stop_realtime_publishing(cleanup_task_id)
+                    task_manager.update_task_status(
+                        cleanup_task_id,
+                        status="failed",
+                        error=error_msg
+                    )
+                    return task_manager.get_task_status(cleanup_task_id)
+
+                self.publish_log(cleanup_task_id, f"Batch {batch_id} processed successfully", "info")
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="cleaning_files",
+                    progress=85.0
+                )
+
+                self.publish_log(cleanup_task_id, "Cleaning up processed files...", "info")
+
+                await CrawlResultController.mark_as_uploaded(task_id=original_task_id, upload=True)
+                
+                cleanup_result = await ScrapeDataController._cleanup_processed_files(
+                    original_task_id, base_path, files_data["files"]
+                )
+                
+                await ScrapeDataController._cleanup_empty_directories(original_task_id, base_path)
+                
+                files_processed = cleanup_result.get("deleted_count", 0)
+                self.publish_log(cleanup_task_id, f"Successfully cleaned up {files_processed} files", "info")
+
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="completed",
+                    progress=100.0,
+                    result={
+                        **task_manager.get_task_status(cleanup_task_id)["result"],
+                        "files_processed": files_processed,
+                        "cleanup_completed": True,
+                        "batch_processing_successful": True
+                    }
+                )
+                
+                self.publish_log(cleanup_task_id, f"Web cleanup completed successfully for task {original_task_id}", "info")
+                
+                await self._stop_realtime_publishing(cleanup_task_id)
+                return task_manager.get_task_status(cleanup_task_id)
+                
+            except Exception as cleanup_error:
+                error_msg = f"Cleanup operation failed: {str(cleanup_error)}"
+                self.publish_log(cleanup_task_id, error_msg, "error")
+                self.publish_log(cleanup_task_id, traceback.format_exc(), "error")
+                
+                await self._stop_realtime_publishing(cleanup_task_id)
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    status="failed", 
+                    error=error_msg
+                )
+                return task_manager.get_task_status(cleanup_task_id)
+                
+        except Exception as e:
+            error_msg = f"Error in web cleanup workflow: {str(e)}"
+            self.publish_log(cleanup_task_id, error_msg, "error")
+            self.publish_log(cleanup_task_id, traceback.format_exc(), "error")
+            
+            await self._stop_realtime_publishing(cleanup_task_id)
+            task_manager.update_task_status(
+                cleanup_task_id,
+                status="failed",
+                error=error_msg
+            )
+            return task_manager.get_task_status(cleanup_task_id)
+
+    async def _collect_fb_files_with_progress(
+        self,
+        task_id: str,
+        cleanup_task_id: str,
+    ) -> Dict[str, Any]:
+        
+        self.publish_log(cleanup_task_id, "Scanning Facebook data directories...", "info")
+        
+        task_manager.update_task_status(
+            cleanup_task_id,
+            progress=20.0
+        )
+        
+        base_path = Path("apollo_data")
+        files_data = await ScrapeDataController._collect_fb_scraped_data(task_id, base_path)
+        
+        self.publish_log(cleanup_task_id, f"Found {len(files_data['files'])} files to process", "info")
+        
+        task_manager.update_task_status(
+            cleanup_task_id,
+            progress=30.0
+        )
+        
+        return files_data
+
+    async def _collect_web_files_with_progress(
+        self,
+        task_id: str,
+        cleanup_task_id: str,
+    ) -> Dict[str, Any]:        
+        self.publish_log(cleanup_task_id, "Scanning web scraping data directories...", "info")
+        
+        task_manager.update_task_status(
+            cleanup_task_id,
+            progress=20.0
+        )
+        
+        base_path = Path("apollo_data")
+        files_data = await ScrapeDataController._collect_web_scraped_data(task_id, base_path)
+        
+        self.publish_log(cleanup_task_id, f"Found {len(files_data['files'])} files to process", "info")
+        
+        task_manager.update_task_status(
+            cleanup_task_id,
+            progress=30.0
+        )
+        
+        return files_data
+
+    async def _create_batch_with_progress(
+        self,
+        cleanup_task_id: str,
+        task_id: str,
+        files: List[Dict[str, Any]],
+        metadata_list: List[Dict[str, Any]],
+        source: str
+    ) -> Optional[str]:        
+        self.publish_log(cleanup_task_id, "Preparing batch package...", "info")
+        
+        task_manager.update_task_status(
+            cleanup_task_id,
+            progress=50.0
+        )
+        
+        batch_id = await ScrapeDataController._create_and_send_batch(
+            task_id, files, metadata_list, source
+        )
+        
+        if batch_id:
+            self.publish_log(cleanup_task_id, f"Batch {batch_id} created and submitted", "info")
+        else:
+            self.publish_log(cleanup_task_id, "Failed to create batch", "error")
+        
+        task_manager.update_task_status(
+            cleanup_task_id,
+            progress=60.0
+        )
+        
+        return batch_id
+
+    async def _wait_for_batch_with_progress(
+        self,
+        cleanup_task_id: str,
+        batch_id: str
+    ) -> bool:        
+        progress_start = 70.0
+        progress_end = 80.0
+        
+        original_max_checks = ScrapeDataController.MAX_STATUS_CHECKS
+        
+        for check_count in range(original_max_checks):
+            try:
+                check_progress = (check_count / original_max_checks) * (progress_end - progress_start)
+                current_progress = progress_start + check_progress
+                
+                task_manager.update_task_status(
+                    cleanup_task_id,
+                    progress=min(current_progress, progress_end)
+                )
+                
+                url = f"{DOCUMENT_BULK_URL}/xiva/faq/api/v1/documents/bulk-ingest/{batch_id}"
+                
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(url)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        
+                        status = result.get("status")
+                        processed_docs = result.get("processed_documents", 0)
+                        total_docs = result.get("total_documents", 0)
+                        failed_docs = result.get("failed_documents", 0)
+                        
+                        if total_docs > 0:
+                            doc_progress = (processed_docs / total_docs) * (progress_end - progress_start)
+                            current_progress = progress_start + doc_progress
+                            
+                            task_manager.update_task_status(
+                                cleanup_task_id,
+                                progress=min(current_progress, progress_end)
+                            )
+                        
+                        if check_count % 5 == 0: 
+                            self.publish_log(
+                                cleanup_task_id,
+                                f"Batch processing status: {status} - {processed_docs}/{total_docs} documents processed",
+                                "info"
+                            )
+                        
+                        if status == "completed":
+                            if failed_docs == 0:
+                                self.publish_log(cleanup_task_id, f"Batch processing completed successfully", "info")
+                                return True
+                            else:
+                                self.publish_log(cleanup_task_id, f"Batch completed with {failed_docs} failures", "warning")
+                                return True
+                                
+                        elif status == "failed":
+                            self.publish_log(cleanup_task_id, f"Batch processing failed", "error")
+                            return False
+                    else:
+                        self.publish_log(cleanup_task_id, f"Error checking batch status: {response.status_code}", "warning")
+            
+            except Exception as e:
+                self.publish_log(cleanup_task_id, f"Error checking batch status: {str(e)}", "warning")
+
+            await asyncio.sleep(ScrapeDataController.STATUS_CHECK_INTERVAL)
+        
+        self.publish_log(cleanup_task_id, f"Batch processing timeout after {original_max_checks} checks", "error")
+        return False
 
 orchestrator = ApolloOrchestrator()
